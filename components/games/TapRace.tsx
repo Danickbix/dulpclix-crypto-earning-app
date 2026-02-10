@@ -33,11 +33,30 @@ export function TapRace() {
     transform: [{ scale: buttonScale.value }],
   }));
 
-  const startGame = () => {
-    setIsPlaying(true);
-    setScore(0);
-    setTimeLeft(GAME_DURATION);
-    setIsGameOver(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
+  const startGame = async () => {
+    setIsLoading(true);
+    try {
+      const response = await blink.functions.invoke('start-game', {
+        body: { gameType: 'tap-race' }
+      });
+      
+      if (response.error) {
+        Alert.alert('Error', response.error);
+        return;
+      }
+
+      setSessionId(response.data.sessionId);
+      setIsPlaying(true);
+      setScore(0);
+      setTimeLeft(GAME_DURATION);
+      setIsGameOver(false);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to start game. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleTap = () => {
@@ -68,53 +87,32 @@ export function TapRace() {
     setIsPlaying(false);
     setIsGameOver(true);
     if (timerRef.current) clearInterval(timerRef.current);
-
-    const reward = Math.floor(score / 5); // 1 token per 5 taps
-    if (reward > 0) {
-      saveResult(reward);
-    }
   };
 
-  const saveResult = async (reward: number) => {
-    if (!user || !profile) return;
+  useEffect(() => {
+    if (isGameOver && sessionId && !isLoading) {
+      saveResult();
+    }
+  }, [isGameOver, sessionId]);
+
+  const saveResult = async () => {
+    if (!user || !profile || !sessionId) return;
     setIsLoading(true);
     try {
-      // 1. Update balance
-      await blink.db.table('profiles').update(profile.id, {
-        balance: (profile.balance || 0) + reward
+      const response = await blink.functions.invoke('end-game', {
+        body: { sessionId, score }
       });
 
-      // 2. Add transaction
-      await blink.db.table('transactions').create({
-        userId: user.id,
-        amount: reward,
-        type: 'earn',
-        description: `Tap Race score: ${score}`,
-      });
-
-      // 3. Update leaderboard
-      const entries = await blink.db.table('leaderboard_entries').list({
-        where: { userId: user.id, period: 'all_time' }
-      });
-      
-      if (entries.length > 0) {
-        await blink.db.table('leaderboard_entries').update(entries[0].id, {
-          score: entries[0].score + score,
-          updatedAt: new Date().toISOString()
-        });
+      if (response.error) {
+        Alert.alert('Game Error', response.error);
       } else {
-        await blink.db.table('leaderboard_entries').create({
-          userId: user.id,
-          score: score,
-          period: 'all_time'
-        });
+        queryClient.invalidateQueries({ queryKey: ['profile'] });
       }
-
-      queryClient.invalidateQueries({ queryKey: ['profile'] });
     } catch (error) {
       console.error('Failed to save game result:', error);
     } finally {
       setIsLoading(false);
+      setSessionId(null);
     }
   };
 

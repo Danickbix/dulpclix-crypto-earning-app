@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, FlatList, Pressable, Alert, Share } from 'react-native';
-import { Container, Button, Card } from '@/components/ui';
+import { Container, Button, Card, Input } from '@/components/ui';
 import { colors, typography, spacing, borderRadius, shadows } from '@/constants/design';
 import { useAuth } from '@/context/AuthContext';
 import { blink } from '@/lib/blink';
 import { TransactionRow } from '@/components/wallet/TransactionRow';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 
@@ -23,6 +23,9 @@ export default function WalletScreen() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('history');
   const [showReceive, setShowReceive] = useState(false);
+  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawAddress, setWithdrawAddress] = useState('');
 
   const { data: transactions, isLoading, refetch } = useQuery({
     queryKey: ['transactions', user?.id],
@@ -35,6 +38,42 @@ export default function WalletScreen() {
     },
     enabled: !!user,
   });
+
+  const withdrawMutation = useMutation({
+    mutationFn: async () => {
+      const response = await blink.functions.invoke('request-withdrawal', {
+        body: { 
+          amount: parseFloat(withdrawAmount), 
+          address: withdrawAddress 
+        }
+      });
+
+      if (response.error) {
+        throw new Error(response.error);
+      }
+
+      return response.data;
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      setShowWithdraw(false);
+      setWithdrawAmount('');
+      setWithdrawAddress('');
+      Alert.alert('Success', data.message);
+    },
+    onError: (error: any) => {
+      Alert.alert('Withdrawal Failed', error.message || 'Something went wrong');
+    },
+  });
+
+  const handleWithdraw = () => {
+    if (!withdrawAmount || !withdrawAddress) {
+      Alert.alert('Error', 'Please enter amount and address');
+      return;
+    }
+    withdrawMutation.mutate();
+  };
 
   const onRefresh = async () => {
     await Promise.all([
@@ -76,7 +115,7 @@ export default function WalletScreen() {
             variant="primary" 
             size="sm" 
             style={styles.cardButton}
-            onPress={() => Alert.alert('Coming Soon', 'Withdrawals will be enabled in Phase 2.')}
+            onPress={() => setShowWithdraw(true)}
           >
             Withdraw
           </Button>
@@ -110,6 +149,44 @@ export default function WalletScreen() {
 
           <Button variant="primary" onPress={handleShareAddress} fullWidth>
             Share Address
+          </Button>
+        </Card>
+      )}
+
+      {showWithdraw && (
+        <Card variant="elevated" style={styles.receiveCard}>
+          <View style={styles.receiveHeader}>
+            <Text style={styles.receiveTitle}>Withdraw DULP</Text>
+            <Pressable onPress={() => setShowWithdraw(false)}>
+              <Ionicons name="close" size={24} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+          <Text style={styles.receiveSubtitle}>Minimum withdrawal: 100 DULP. Processed within 24 hours.</Text>
+          
+          <Input
+            label="Amount (DULP)"
+            placeholder="Min 100"
+            keyboardType="numeric"
+            value={withdrawAmount}
+            onChangeText={setWithdrawAmount}
+            containerStyle={styles.inputContainer}
+          />
+
+          <Input
+            label="Wallet Address"
+            placeholder="Enter destination address"
+            value={withdrawAddress}
+            onChangeText={setWithdrawAddress}
+            containerStyle={styles.inputContainer}
+          />
+
+          <Button 
+            variant="primary" 
+            onPress={handleWithdraw} 
+            loading={withdrawMutation.isPending}
+            fullWidth
+          >
+            Submit Withdrawal
           </Button>
         </Card>
       )}
@@ -224,6 +301,9 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     marginBottom: spacing.lg,
+  },
+  inputContainer: {
+    marginBottom: spacing.md,
   },
   addressBox: {
     flexDirection: 'row',

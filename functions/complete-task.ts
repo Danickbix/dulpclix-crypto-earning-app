@@ -1,0 +1,150 @@
+import { createClient } from "npm:@blinkdotnew/sdk";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, content-type",
+};
+
+async function handler(req: Request): Promise<Response> {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  try {
+    const projectId = Deno.env.get("BLINK_PROJECT_ID");
+    const secretKey = Deno.env.get("BLINK_SECRET_KEY");
+
+    if (!projectId || !secretKey) {
+      return new Response(
+        JSON.stringify({ error: "Missing config" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const blink = createClient({ projectId, secretKey });
+    
+    // 1. Verify Auth
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+    }
+    
+    const auth = await blink.auth.verifyToken(authHeader);
+    if (!auth.valid) {
+      return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: corsHeaders });
+    }
+
+    const userId = auth.userId;
+    const { taskId } = await req.json();
+
+    if (!taskId) {
+      return new Response(JSON.stringify({ error: "Task ID required" }), { status: 400, headers: corsHeaders });
+    }
+
+    // 2. Fetch Task Data
+    const task = await blink.db.table("tasks").get(taskId);
+    if (!task || Number(task.is_active) === 0) {
+      return new Response(JSON.stringify({ error: "Task not found or inactive" }), { status: 404, headers: corsHeaders });
+    }
+
+    // 3. Validation Logic
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+
+    // Check daily completion limit
+    const dailyCompletions = await blink.db.table("user_tasks").count({
+      where: {
+        AND: [
+          { userId: userId },
+          { taskId: taskId },
+          { completedAt: { gte: todayStart } }
+        ]
+      }
+    });
+
+    if (dailyCompletions >= Number(task.max_completions_per_day)) {
+      return new Response(JSON.stringify({ error: "Daily limit reached for this task" }), { status: 400, headers: corsHeaders });
+    }
+
+    // Check cooldown
+    if (Number(task.cooldown_minutes) > 0) {
+      const lastCompletion = await blink.db.table("user_tasks").list({
+        where: { userId: userId, taskId: taskId },
+        orderBy: { completedAt: "desc" },
+        limit: 1
+      });
+
+      if (lastCompletion.length > 0) {
+        const lastTime = new Date(lastCompletion[0].completedAt);
+        const diffMs = now.getTime() - lastTime.getTime();
+        const diffMins = diffMs / (1000 * 60);
+        
+        if (diffMins < Number(task.cooldown_minutes)) {
+          return new Response(JSON.stringify({ error: "Task in cooldown" }), { status: 400, headers: corsHeaders });
+        }
+      }
+    }
+
+    // 4. Issue Reward
+    const profile = await blink.db.table("profiles").get(`profile_${userId.split('_')[1] || userId}`);
+    // Fallback search if ID pattern is different
+    let userProfile = profile;
+    if (!userProfile) {
+      const profiles = await blink.db.table("profiles").list({ where: { userId } });
+      if (profiles.length > 0) userProfile = profiles[0];
+    }
+
+    if (!userProfile) {
+      return new Response(JSON.stringify({ error: "Profile not found" }), { status: 404, headers: corsHeaders });
+    }
+
+    const rewardAmount = Number(task.reward_amount);
+    const newBalance = (Number(userProfile.balance) || 0) + rewardAmount;
+
+    // Transactional updates (simulated as individual calls since SQL batch is restricted)
+    // In a real environment, we'd want atomicity.
+    
+    // Create user_task record
+    await blink.db.table("user_tasks").create({
+      userId,
+      taskId,
+      status: "completed",
+      completedAt: now.toISOString()
+    });
+
+    // Create transaction record
+    await blink.db.table("transactions").create({
+      userId,
+      amount: rewardAmount,
+      type: "earn",
+      description: `Completed task: ${task.title}`
+    });
+
+    // Update profile
+    const profileUpdate: any = { balance: newBalance };
+    if (task.type === "checkin") {
+      profileUpdate.streakCount = (Number(userProfile.streakCount) || 0) + 1;
+      profileUpdate.lastStreakAt = now.toISOString();
+    }
+    
+    await blink.db.table("profiles").update(userProfile.id, profileUpdate);
+
+    return new Response(JSON.stringify({ 
+      ok: true, 
+      reward: rewardAmount, 
+      newBalance: newBalance 
+    }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    console.error("Error:", error);
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+}
+
+Deno.serve(handler);

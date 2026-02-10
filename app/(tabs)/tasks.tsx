@@ -52,42 +52,25 @@ export default function TasksScreen() {
     mutationFn: async (task: Task) => {
       if (!user || !profile) return;
 
-      // 1. Create user_task entry
-      await blink.db.table('user_tasks').create({
-        userId: user.id,
-        taskId: task.id,
-        status: 'completed',
-        completedAt: new Date().toISOString(),
+      const response = await blink.functions.invoke('complete-task', {
+        body: { taskId: task.id }
       });
 
-      // 2. Update user balance
-      const newBalance = (profile.balance || 0) + task.rewardAmount;
-      await blink.db.table('profiles').update(profile.id, {
-        balance: newBalance,
-        // Update streak if checkin
-        ...(task.type === 'checkin' ? { 
-          streakCount: (profile.streakCount || 0) + 1,
-          lastStreakAt: new Date().toISOString()
-        } : {})
-      });
+      if (response.error) {
+        throw new Error(response.error);
+      }
 
-      // 3. Create transaction log
-      await blink.db.table('transactions').create({
-        userId: user.id,
-        amount: task.rewardAmount,
-        type: 'earn',
-        description: `Completed task: ${task.title}`,
-      });
+      return response.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
       queryClient.invalidateQueries({ queryKey: ['userTasks'] });
       setClaimingTaskId(null);
-      Alert.alert('Success', 'Reward claimed successfully!');
+      Alert.alert('Success', `Reward of ${data.reward} DULP claimed successfully!`);
     },
-    onError: (error) => {
+    onError: (error: any) => {
       setClaimingTaskId(null);
-      Alert.alert('Error', 'Failed to complete task. Maybe you already finished it?');
+      Alert.alert('Error', error.message || 'Failed to complete task.');
     },
   });
 
