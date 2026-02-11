@@ -10,6 +10,7 @@ export default function LoginScreen() {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async () => {
@@ -23,7 +24,11 @@ export default function LoginScreen() {
       if (isLogin) {
         await blink.auth.signInWithEmail(email, password);
       } else {
-        await blink.auth.signUp({ email, password });
+        await blink.auth.signUp({ 
+          email, 
+          password,
+          metadata: { referredBy: referralCode }
+        });
       }
       router.replace('/(tabs)');
     } catch (error) {
@@ -79,6 +84,16 @@ export default function LoginScreen() {
               placeholder="Enter your password"
               secureTextEntry
             />
+
+            {!isLogin && (
+              <Input
+                label="Referral Code (Optional)"
+                value={referralCode}
+                onChangeText={setReferralCode}
+                placeholder="Enter referral code"
+                autoCapitalize="characters"
+              />
+            )}
 
             <Button 
               variant="primary" 

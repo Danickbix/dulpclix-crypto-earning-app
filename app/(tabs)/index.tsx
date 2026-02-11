@@ -22,8 +22,13 @@ export default function DashboardScreen() {
   const { data: xpProfile } = useQuery({
     queryKey: ['xp_profile', user?.id],
     queryFn: async () => {
-      const xp = await blink.db.table('xp_profiles').get(user?.id!);
-      return xp;
+      try {
+        if (!user?.id) return null;
+        return await blink.db.table('xp_profiles').get(user.id);
+      } catch (error) {
+        console.log('Error fetching XP profile on dashboard:', error);
+        return null;
+      }
     },
     enabled: !!user,
   });

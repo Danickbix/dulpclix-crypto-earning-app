@@ -9,7 +9,8 @@ interface Task {
   id: string;
   title: string;
   description: string;
-  rewardAmount: number;
+  rewardAmount?: number;
+  reward_amount?: number;
   category: string;
   type: string;
   link?: string;
@@ -64,7 +65,7 @@ export function TaskCard({ task, isCompleted, onPress, isLoading }: TaskCardProp
       <View style={styles.footer}>
         <View style={styles.rewardInfo}>
           <Text style={styles.rewardLabel}>Reward</Text>
-          <Text style={styles.rewardValue}>+{task.rewardAmount} DULP</Text>
+          <Text style={styles.rewardValue}>+{task.rewardAmount ?? task.reward_amount ?? 0} DULP</Text>
         </View>
         
         <Button 

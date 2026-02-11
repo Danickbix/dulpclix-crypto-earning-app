@@ -176,6 +176,32 @@ async function handler(req: Request): Promise<Response> {
     
     await blink.db.table("profiles").update(userProfile.id, profileUpdate);
 
+    // 6. Referral Commission (10%)
+    if (userProfile.referred_by) {
+      const referrers = await blink.db.table("profiles").list({
+        where: { referralCode: userProfile.referred_by }
+      });
+      
+      const referrer = referrers[0];
+      if (referrer) {
+        const commission = Math.floor(rewardAmount * 0.1);
+        if (commission > 0) {
+          const newReferrerBalance = (Number(referrer.balance) || 0) + commission;
+          
+          await blink.db.table("profiles").update(referrer.id, {
+            balance: newReferrerBalance
+          });
+
+          await blink.db.table("transactions").create({
+            userId: referrer.userId,
+            amount: commission,
+            type: "referral",
+            description: `Referral commission from ${userProfile.displayName || 'a friend'}`
+          });
+        }
+      }
+    }
+
     return new Response(JSON.stringify({ 
       ok: true, 
       reward: rewardAmount, 

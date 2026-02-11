@@ -66,6 +66,25 @@ export default function ProfileScreen() {
           <RefreshControl refreshing={isLoading} onRefresh={onRefresh} tintColor={colors.primary} />
         }
       >
+        {(user?.email === ADMIN_EMAIL || profile?.role === 'admin') && (
+          <Card variant="outline" style={styles.adminBanner}>
+            <View style={styles.adminBannerContent}>
+              <View>
+                <Text style={styles.adminBannerTitle}>ADMIN ACCESS</Text>
+                <Text style={styles.adminBannerSubtitle}>You have full control over the platform.</Text>
+              </View>
+              <Button 
+                variant="primary" 
+                size="sm" 
+                onPress={() => router.push('/admin')}
+                leftIcon={<Ionicons name="shield-checkmark" size={16} color="white" />}
+              >
+                Launch Dashboard
+              </Button>
+            </View>
+          </Card>
+        )}
+
         <View style={styles.header}>
           <Avatar 
             source={profile?.avatarUrl ? { uri: profile.avatarUrl } : undefined} 
@@ -157,6 +176,27 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: spacing.lg,
     paddingBottom: 120,
+  },
+  adminBanner: {
+    marginBottom: spacing.lg,
+    backgroundColor: colors.primary + '11',
+    borderColor: colors.primary,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+  },
+  adminBannerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: spacing.md,
+  },
+  adminBannerTitle: {
+    ...typography.captionBold,
+    color: colors.primary,
+  },
+  adminBannerSubtitle: {
+    ...typography.tiny,
+    color: colors.textSecondary,
   },
   header: {
     alignItems: 'center',

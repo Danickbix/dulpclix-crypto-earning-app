@@ -13,7 +13,8 @@ interface Task {
   id: string;
   title: string;
   description: string;
-  rewardAmount: number;
+  rewardAmount?: number;
+  reward_amount?: number;
   category: string;
   type: string;
   link?: string;
@@ -35,7 +36,13 @@ export default function TasksScreen() {
   const { data: xpProfile } = useQuery({
     queryKey: ['xp_profile', user?.id],
     queryFn: async () => {
-      return await blink.db.table('xp_profiles').get(user?.id!);
+      try {
+        if (!user?.id) return null;
+        return await blink.db.table('xp_profiles').get(user.id);
+      } catch (error) {
+        console.log('Error fetching XP profile:', error);
+        return null;
+      }
     },
     enabled: !!user,
   });
@@ -45,7 +52,9 @@ export default function TasksScreen() {
   const { data: tasks, isLoading: isLoadingTasks, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: async () => {
-      return await blink.db.table('tasks').list() as Task[];
+      const result = await blink.db.table('tasks').list() as Task[];
+      console.log('Tasks fetched:', result);
+      return result;
     },
   });
 
@@ -113,7 +122,7 @@ export default function TasksScreen() {
       </View>
 
       <FlatList
-        data={tasks}
+        data={tasks || []}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <TaskCard 
