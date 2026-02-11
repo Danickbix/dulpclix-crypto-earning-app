@@ -50,8 +50,9 @@ export default function TasksScreen() {
   const { data: tasks, isLoading: isLoadingTasks, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: async () => {
-      const result = await blink.db.table('tasks').list() as Task[];
-      console.log('Tasks fetched:', result);
+      const result = await blink.db.table('tasks').list({
+        where: { isActive: 1 },
+      }) as Task[];
       return result;
     },
   });
@@ -69,23 +70,30 @@ export default function TasksScreen() {
 
   const completeTaskMutation = useMutation({
     mutationFn: async (task: Task) => {
-      if (!user || !profile) return;
+      if (!user || !profile) throw new Error('Not authenticated');
 
       const response = await blink.functions.invoke('complete-task', {
         body: { taskId: task.id }
       });
 
-      if (response.error) {
-        throw new Error(response.error);
+      // Handle both nested and flat response shapes
+      const data = response?.data || response;
+      if (data?.error) {
+        throw new Error(data.error);
       }
 
-      return response.data;
+      return data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
       queryClient.invalidateQueries({ queryKey: ['userTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['xp_profile'] });
       setClaimingTaskId(null);
-      Alert.alert('Success', `Reward of ${data.reward} DULP claimed successfully!`);
+      const reward = data?.reward || 0;
+      const msg = data?.leveledUp
+        ? `+${reward} DULP! 🎉 You leveled up to Level ${data.currentLevel}!`
+        : `+${reward} DULP claimed successfully!`;
+      Alert.alert('Reward Claimed', msg);
     },
     onError: (error: any) => {
       setClaimingTaskId(null);
@@ -105,7 +113,7 @@ export default function TasksScreen() {
   };
 
   const isCompleted = (taskId: string) => {
-    return userTasks?.some(ut => ut.taskId === taskId) || false;
+    return userTasks?.some(ut => ut.taskId === taskId && ut.status === 'completed') || false;
   };
 
   const onRefresh = async () => {

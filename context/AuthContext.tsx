@@ -55,7 +55,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (profiles.length === 0) {
         // Create profile if it doesn't exist
         const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-        const referredBy = user.metadata?.referredBy as string | undefined;
+        const referredByInput = user.metadata?.referredBy as string | undefined;
+
+        // Validate referral code exists before storing
+        let validReferredBy: string | null = null;
+        if (referredByInput) {
+          try {
+            const referrerProfiles = await blink.db.table('profiles').list({
+              where: { referralCode: referredByInput.toUpperCase() },
+            });
+            if (referrerProfiles.length > 0) {
+              validReferredBy = referredByInput.toUpperCase();
+            }
+          } catch (e) {
+            console.log('Referral code validation skipped:', e);
+          }
+        }
 
         const newProfile = await blink.db.table('profiles').create({
           userId: user.id,
@@ -63,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           avatarUrl: user.avatarUrl || '',
           balance: 0,
           referralCode,
-          referredBy: referredBy || null,
+          referredBy: validReferredBy,
           streakCount: 0,
           role: isAdmin ? 'admin' : 'user',
         });

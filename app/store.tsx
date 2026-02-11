@@ -17,24 +17,27 @@ export default function StoreScreen() {
   const { data: items, isLoading } = useQuery({
     queryKey: ['store_items'],
     queryFn: async () => {
-      return await blink.db.table('store_items').list({ where: { is_active: 1 } });
+      return await blink.db.table('store_items').list({ where: { isActive: 1 } });
     }
   });
 
   const buyItem = useMutation({
     mutationFn: async (itemId: string) => {
-      // In a real app, use an edge function to validate balance and apply boost
-      return await blink.functions.invoke('purchase-item', {
+      const response = await blink.functions.invoke('purchase-item', {
         body: { itemId }
       });
+      if (response.error) {
+        throw new Error(response.error);
+      }
+      return response;
     },
     onSuccess: (data: any) => {
-      if (data.error) {
-        Alert.alert('Error', data.error);
-      } else {
-        queryClient.invalidateQueries({ queryKey: ['profile'] });
-        Alert.alert('Success', 'Item purchased successfully!');
-      }
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      queryClient.invalidateQueries({ queryKey: ['store_items'] });
+      Alert.alert('Success', `Purchased ${data.item || 'item'} successfully!`);
+    },
+    onError: (error: any) => {
+      Alert.alert('Error', error.message || 'Failed to purchase item.');
     }
   });
 
@@ -75,9 +78,9 @@ export default function StoreScreen() {
       <ScrollView style={styles.content}>
         {isLoading ? (
           <Text style={styles.statusText}>Loading items...</Text>
-        ) : (
+        ) : filteredItems && filteredItems.length > 0 ? (
           <View style={styles.grid}>
-            {filteredItems?.map(item => (
+            {filteredItems.map((item: any) => (
               <Card key={item.id} style={styles.itemCard}>
                 <View style={styles.iconContainer}>
                   <Ionicons 
@@ -89,11 +92,11 @@ export default function StoreScreen() {
                 <Text style={styles.itemName}>{item.name}</Text>
                 <Text style={styles.itemDesc}>{item.description}</Text>
                 <View style={styles.footer}>
-                  <Text style={styles.price}>{item.price} DULP</Text>
+                  <Text style={styles.price}>{Number(item.price)} DULP</Text>
                   <Button
                     size="sm"
                     variant="primary"
-                    disabled={buyItem.isPending || (profile?.balance || 0) < item.price}
+                    disabled={buyItem.isPending || (profile?.balance || 0) < Number(item.price)}
                     onPress={() => buyItem.mutate(item.id)}
                   >
                     Buy
@@ -101,6 +104,12 @@ export default function StoreScreen() {
                 </View>
               </Card>
             ))}
+          </View>
+        ) : (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="cart-outline" size={64} color={colors.textTertiary} />
+            <Text style={styles.emptyTitle}>No Items Available</Text>
+            <Text style={styles.statusText}>Store items will appear here when added by the admin.</Text>
           </View>
         )}
       </ScrollView>
@@ -205,5 +214,15 @@ const styles = StyleSheet.create({
     color: colors.textTertiary,
     textAlign: 'center',
     marginTop: 50,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxxl,
+    gap: spacing.md,
+  },
+  emptyTitle: {
+    ...typography.h3,
+    color: colors.textSecondary,
   },
 });

@@ -86,14 +86,9 @@ async function handler(req: Request): Promise<Response> {
       }
     }
 
-    // 4. Issue Reward
-    const profile = await blink.db.table("profiles").get(`profile_${userId.split('_')[1] || userId}`);
-    // Fallback search if ID pattern is different
-    let userProfile = profile;
-    if (!userProfile) {
-      const profiles = await blink.db.table("profiles").list({ where: { userId } });
-      if (profiles.length > 0) userProfile = profiles[0];
-    }
+    // 4. Issue Reward - find profile by userId
+    const profiles = await blink.db.table("profiles").list({ where: { userId } });
+    const userProfile = profiles.length > 0 ? profiles[0] : null;
 
     if (!userProfile) {
       return new Response(JSON.stringify({ error: "Profile not found" }), { status: 404, headers: corsHeaders });
@@ -177,15 +172,18 @@ async function handler(req: Request): Promise<Response> {
     await blink.db.table("profiles").update(userProfile.id, profileUpdate);
 
     // 6. Referral Commission (10%)
-    if (userProfile.referred_by) {
+    // SDK returns camelCase, but raw DB may use snake_case - handle both
+    const referredByCode = userProfile.referredBy || userProfile.referred_by;
+    if (referredByCode) {
       const referrers = await blink.db.table("profiles").list({
-        where: { referralCode: userProfile.referred_by }
+        where: { referralCode: referredByCode }
       });
       
       const referrer = referrers[0];
       if (referrer) {
         const commission = Math.floor(rewardAmount * 0.1);
         if (commission > 0) {
+          const referrerUserId = referrer.userId || referrer.user_id;
           const newReferrerBalance = (Number(referrer.balance) || 0) + commission;
           
           await blink.db.table("profiles").update(referrer.id, {
@@ -193,10 +191,10 @@ async function handler(req: Request): Promise<Response> {
           });
 
           await blink.db.table("transactions").create({
-            userId: referrer.userId,
+            userId: referrerUserId,
             amount: commission,
             type: "referral",
-            description: `Referral commission from ${userProfile.displayName || 'a friend'}`
+            description: `Referral commission from ${userProfile.displayName || userProfile.display_name || 'a friend'}`
           });
         }
       }
