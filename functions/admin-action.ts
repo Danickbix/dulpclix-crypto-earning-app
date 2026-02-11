@@ -4,130 +4,253 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "authorization, content-type",
+  "Content-Type": "application/json",
 };
+
+const ADMIN_EMAIL = "Danickbix@gmail.com";
 
 async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  const blink = createClient({
-    projectId: Deno.env.get("BLINK_PROJECT_ID")!,
-    secretKey: Deno.env.get("BLINK_SECRET_KEY")!,
-  });
-
-  // Verify admin access via JWT
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
-  }
-
-  const user = await blink.auth.me(authHeader);
-  const ADMIN_EMAIL = "Danickbix@gmail.com";
-
-  if (!user || user.email !== ADMIN_EMAIL) {
-    return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsHeaders });
-  }
-
-  const body = await req.json();
-  const { action } = body;
-
   try {
+    const projectId = Deno.env.get("BLINK_PROJECT_ID");
+    const secretKey = Deno.env.get("BLINK_SECRET_KEY");
+
+    if (!projectId || !secretKey) {
+      return new Response(
+        JSON.stringify({ error: "Missing server config" }),
+        { status: 500, headers: corsHeaders }
+      );
+    }
+
+    const blink = createClient({ projectId, secretKey });
+
+    // Verify JWT token
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized - no token" }),
+        { status: 401, headers: corsHeaders }
+      );
+    }
+
+    const auth = await blink.auth.verifyToken(authHeader);
+    if (!auth.valid) {
+      return new Response(
+        JSON.stringify({ error: "Invalid token", details: auth.error }),
+        { status: 401, headers: corsHeaders }
+      );
+    }
+
+    // Check admin access by email
+    if (auth.email !== ADMIN_EMAIL) {
+      // Also check profile role as fallback
+      const profiles = await blink.db.table("profiles").list({
+        where: { userId: auth.userId },
+      });
+      const profile = profiles[0];
+      if (!profile || profile.role !== "admin") {
+        return new Response(
+          JSON.stringify({ error: "Forbidden - not admin" }),
+          { status: 403, headers: corsHeaders }
+        );
+      }
+    }
+
+    const body = await req.json();
+    const { action } = body;
+
     switch (action) {
       case "get_stats": {
         const totalUsers = await blink.db.table("profiles").count();
-        const pendingWithdrawals = await blink.db.table("withdrawals").count({ where: { status: "pending" } });
-        const today = new Date().toISOString().split('T')[0];
-        const todayEmission = await blink.db.table("daily_emissions").get(today);
-        
-        return new Response(JSON.stringify({
-          totalUsers,
-          pendingWithdrawals,
-          dailyEmission: todayEmission?.total_emitted || 0
-        }), { headers: corsHeaders });
+        const pendingWithdrawals = await blink.db
+          .table("withdrawals")
+          .count({ where: { status: "pending" } });
+        const today = new Date().toISOString().split("T")[0];
+        const todayEmission = await blink.db
+          .table("daily_emissions")
+          .get(today);
+
+        return new Response(
+          JSON.stringify({
+            totalUsers,
+            pendingWithdrawals,
+            dailyEmission: todayEmission?.totalEmitted || 0,
+          }),
+          { headers: corsHeaders }
+        );
       }
 
       case "list_withdrawals": {
         const withdrawals = await blink.db.table("withdrawals").list({
           orderBy: { createdAt: "desc" },
-          limit: 100
+          limit: 100,
         });
-        return new Response(JSON.stringify(withdrawals), { headers: corsHeaders });
+        return new Response(JSON.stringify(withdrawals), {
+          headers: corsHeaders,
+        });
       }
 
       case "update_withdrawal": {
         const { withdrawalId, status } = body;
-        const withdrawal = await blink.db.table("withdrawals").get(withdrawalId);
-        if (!withdrawal) throw new Error("Withdrawal not found");
+        const withdrawal = await blink.db
+          .table("withdrawals")
+          .get(withdrawalId);
+        if (!withdrawal) {
+          return new Response(
+            JSON.stringify({ error: "Withdrawal not found" }),
+            { status: 404, headers: corsHeaders }
+          );
+        }
 
         if (status === "approved" && withdrawal.status === "pending") {
-          await blink.db.table("withdrawals").update(withdrawalId, { status: "approved", updated_at: new Date().toISOString() });
-          
+          await blink.db
+            .table("withdrawals")
+            .update(withdrawalId, {
+              status: "approved",
+              updatedAt: new Date().toISOString(),
+            });
+
           await blink.db.table("transactions").create({
             userId: withdrawal.userId,
-            amount: -withdrawal.amount,
+            amount: -Number(withdrawal.amount),
             type: "withdrawal",
             status: "completed",
-            description: "Withdrawal approved"
+            description: "Withdrawal approved",
           });
         } else if (status === "rejected") {
-          await blink.db.table("withdrawals").update(withdrawalId, { status: "rejected", updated_at: new Date().toISOString() });
-          
-          const profiles = await blink.db.table("profiles").list({ where: { userId: withdrawal.userId } });
+          await blink.db
+            .table("withdrawals")
+            .update(withdrawalId, {
+              status: "rejected",
+              updatedAt: new Date().toISOString(),
+            });
+
+          // Refund balance
+          const profiles = await blink.db
+            .table("profiles")
+            .list({ where: { userId: withdrawal.userId } });
           if (profiles[0]) {
             await blink.db.table("profiles").update(profiles[0].id, {
-              balance: Number(profiles[0].balance) + Number(withdrawal.amount)
+              balance:
+                Number(profiles[0].balance) + Number(withdrawal.amount),
             });
           }
         }
-        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: corsHeaders,
+        });
       }
 
       case "list_users": {
         const users = await blink.db.table("profiles").list({
-          orderBy: { created_at: "desc" },
-          limit: 100
+          orderBy: { createdAt: "desc" },
+          limit: 200,
         });
-        return new Response(JSON.stringify(users), { headers: corsHeaders });
+        return new Response(JSON.stringify(users), {
+          headers: corsHeaders,
+        });
       }
 
       case "update_user": {
         const { targetUserId, updates } = body;
-        const profiles = await blink.db.table("profiles").list({ where: { userId: targetUserId } });
-        if (!profiles[0]) throw new Error("User not found");
-        
-        await blink.db.table("profiles").update(profiles[0].id, updates);
-        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
+        const profiles = await blink.db
+          .table("profiles")
+          .list({ where: { userId: targetUserId } });
+        if (!profiles[0]) {
+          return new Response(
+            JSON.stringify({ error: "User profile not found" }),
+            { status: 404, headers: corsHeaders }
+          );
+        }
+
+        // Only allow safe fields to be updated
+        const safeUpdates: Record<string, any> = {};
+        if (updates.balance !== undefined) safeUpdates.balance = Number(updates.balance);
+        if (updates.role !== undefined) safeUpdates.role = String(updates.role);
+        if (updates.displayName !== undefined) safeUpdates.displayName = String(updates.displayName);
+        if (updates.streakCount !== undefined) safeUpdates.streakCount = Number(updates.streakCount);
+        if (updates.isActivated !== undefined) safeUpdates.isActivated = updates.isActivated ? 1 : 0;
+
+        await blink.db.table("profiles").update(profiles[0].id, safeUpdates);
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: corsHeaders,
+        });
+      }
+
+      case "promote_to_admin": {
+        // Special action: only the ADMIN_EMAIL can promote themselves
+        if (auth.email !== ADMIN_EMAIL) {
+          return new Response(
+            JSON.stringify({ error: "Only the primary admin can self-promote" }),
+            { status: 403, headers: corsHeaders }
+          );
+        }
+        const profiles = await blink.db
+          .table("profiles")
+          .list({ where: { userId: auth.userId } });
+        if (profiles[0]) {
+          await blink.db.table("profiles").update(profiles[0].id, { role: "admin" });
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: corsHeaders,
+        });
       }
 
       case "list_tasks": {
         const tasks = await blink.db.table("tasks").list({
-          orderBy: { created_at: "desc" }
+          orderBy: { createdAt: "desc" },
         });
-        return new Response(JSON.stringify(tasks), { headers: corsHeaders });
+        return new Response(JSON.stringify(tasks), {
+          headers: corsHeaders,
+        });
       }
 
       case "upsert_task": {
         const { task } = body;
         if (task.id) {
-          await blink.db.table("tasks").update(task.id, task);
+          const { id, ...updateData } = task;
+          await blink.db.table("tasks").update(id, updateData);
         } else {
           await blink.db.table("tasks").create(task);
         }
-        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: corsHeaders,
+        });
       }
 
       case "delete_task": {
         const { taskId } = body;
         await blink.db.table("tasks").delete(taskId);
-        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: corsHeaders,
+        });
+      }
+
+      case "list_fraud_flags": {
+        const flags = await blink.db.table("fraud_flags").list({
+          orderBy: { createdAt: "desc" },
+          limit: 100,
+        });
+        return new Response(JSON.stringify(flags), {
+          headers: corsHeaders,
+        });
       }
 
       default:
-        return new Response(JSON.stringify({ error: "Invalid action" }), { status: 400, headers: corsHeaders });
+        return new Response(
+          JSON.stringify({ error: `Invalid action: ${action}` }),
+          { status: 400, headers: corsHeaders }
+        );
     }
   } catch (error: any) {
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+    console.error("Admin action error:", error);
+    return new Response(
+      JSON.stringify({ error: error.message || "Internal server error" }),
+      { status: 500, headers: corsHeaders }
+    );
   }
 }
 

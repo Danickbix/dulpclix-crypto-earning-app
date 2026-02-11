@@ -10,42 +10,78 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 const ADMIN_EMAIL = 'Danickbix@gmail.com';
 
-export default function AdminDashboard() {
-  const { user, profile: myProfile, isAuthenticated, isLoading: authLoading } = useAuth();
+function useAdminAccess() {
+  const { user, profile, isAuthenticated, isLoading: authLoading } = useAuth();
+  const queryClient = useQueryClient();
   const router = useRouter();
+  const [isPromoting, setIsPromoting] = useState(false);
+
+  const isAdminEmail = user?.email === ADMIN_EMAIL;
+  const isAdmin = profile?.role === 'admin';
+  const needsPromotion = isAdminEmail && profile && !isAdmin;
+
+  useEffect(() => {
+    if (authLoading || isPromoting) return;
+
+    if (!isAuthenticated) {
+      router.replace('/');
+      return;
+    }
+
+    // Auto-promote the admin email user
+    if (needsPromotion) {
+      setIsPromoting(true);
+      blink.functions.invoke('admin-action', {
+        body: { action: 'promote_to_admin' }
+      }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ['profile'] });
+        setIsPromoting(false);
+      }).catch((err) => {
+        console.error('Promotion failed:', err);
+        setIsPromoting(false);
+      });
+      return;
+    }
+
+    // Non-admin, non-admin-email user — redirect
+    if (!isAdminEmail && !isAdmin) {
+      if (Platform.OS === 'web') {
+        alert('Access Denied: You do not have permission to view this page.');
+      } else {
+        Alert.alert('Access Denied', 'You do not have permission to view this page.');
+      }
+      router.replace('/');
+    }
+  }, [user, profile, isAuthenticated, authLoading, needsPromotion, isPromoting]);
+
+  return {
+    canAccess: isAdmin || isAdminEmail,
+    isReady: !authLoading && !isPromoting && (isAdmin || isAdminEmail),
+    isLoading: authLoading || isPromoting || needsPromotion,
+  };
+}
+
+export default function AdminDashboard() {
+  const { user, profile: myProfile } = useAuth();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('withdrawals');
   const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<any>(null);
   const [isUserModalVisible, setIsUserModalVisible] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
+  const router = useRouter();
 
-  useEffect(() => {
-    if (!authLoading && (!isAuthenticated || myProfile?.role !== 'admin')) {
-      if (user?.email === ADMIN_EMAIL && myProfile && myProfile.role !== 'admin') {
-        // Auto-promote first admin
-        blink.functions.invoke('admin-action', {
-          body: { action: 'update_user', targetUserId: user.id, updates: { role: 'admin' } }
-        }).then(() => queryClient.invalidateQueries({ queryKey: ['profile'] }));
-      } else if (user?.email !== ADMIN_EMAIL) {
-        Alert.alert('Access Denied', 'You do not have permission to view this page.');
-        router.replace('/');
-      }
-    }
-  }, [user, myProfile, isAuthenticated, authLoading]);
+  const { canAccess, isReady, isLoading } = useAdminAccess();
 
   const { data: withdrawals } = useQuery({
     queryKey: ['admin_withdrawals'],
     queryFn: async () => {
-      // In a real app, this would be an admin-only endpoint
-      // For now we use the DB directly (only works if security policy allows or we use an edge function)
-      // Since security policy is owner-based, we NEED an edge function for admin reads.
       const response = await blink.functions.invoke('admin-action', {
         body: { action: 'list_withdrawals' }
       });
-      return response.data;
+      return response?.data || response || [];
     },
-    enabled: !!myProfile && myProfile.role === 'admin'
+    enabled: isReady,
   });
 
   const { data: users } = useQuery({
@@ -54,9 +90,9 @@ export default function AdminDashboard() {
       const response = await blink.functions.invoke('admin-action', {
         body: { action: 'list_users' }
       });
-      return response.data;
+      return response?.data || response || [];
     },
-    enabled: !!myProfile && myProfile.role === 'admin' && activeTab === 'users'
+    enabled: isReady && activeTab === 'users',
   });
 
   const { data: tasks } = useQuery({
@@ -65,9 +101,9 @@ export default function AdminDashboard() {
       const response = await blink.functions.invoke('admin-action', {
         body: { action: 'list_tasks' }
       });
-      return response.data;
+      return response?.data || response || [];
     },
-    enabled: !!myProfile && myProfile.role === 'admin' && activeTab === 'tasks'
+    enabled: isReady && activeTab === 'tasks',
   });
 
   const { data: stats } = useQuery({
@@ -76,20 +112,24 @@ export default function AdminDashboard() {
       const response = await blink.functions.invoke('admin-action', {
         body: { action: 'get_stats' }
       });
-      return response.data;
+      return response?.data || response || {};
     },
-    enabled: !!myProfile && myProfile.role === 'admin'
+    enabled: isReady,
   });
 
   const handleWithdrawal = useMutation({
-    mutationFn: async ({ id, status }: { id: string, status: 'approved' | 'rejected' }) => {
+    mutationFn: async ({ id, status }: { id: string; status: 'approved' | 'rejected' }) => {
       return await blink.functions.invoke('admin-action', {
         body: { action: 'update_withdrawal', withdrawalId: id, status }
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin_withdrawals'] });
+      queryClient.invalidateQueries({ queryKey: ['admin_stats'] });
       Alert.alert('Success', 'Withdrawal updated successfully.');
+    },
+    onError: (err: any) => {
+      Alert.alert('Error', err.message || 'Failed to update withdrawal');
     }
   });
 
@@ -104,11 +144,14 @@ export default function AdminDashboard() {
       setIsTaskModalVisible(false);
       setEditingTask(null);
       Alert.alert('Success', 'Task saved successfully.');
+    },
+    onError: (err: any) => {
+      Alert.alert('Error', err.message || 'Failed to save task');
     }
   });
 
   const handleUserUpdate = useMutation({
-    mutationFn: async ({ targetUserId, updates }: { targetUserId: string, updates: any }) => {
+    mutationFn: async ({ targetUserId, updates }: { targetUserId: string; updates: any }) => {
       return await blink.functions.invoke('admin-action', {
         body: { action: 'update_user', targetUserId, updates }
       });
@@ -118,16 +161,25 @@ export default function AdminDashboard() {
       setIsUserModalVisible(false);
       setEditingUser(null);
       Alert.alert('Success', 'User updated successfully.');
+    },
+    onError: (err: any) => {
+      Alert.alert('Error', err.message || 'Failed to update user');
     }
   });
 
-  if (authLoading || (isAuthenticated && myProfile?.role !== 'admin' && user?.email !== ADMIN_EMAIL)) {
+  if (isLoading || !canAccess) {
     return (
       <Container style={styles.loading}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <Ionicons name="shield-checkmark" size={48} color={colors.primary} />
         <Text style={styles.loadingText}>Verifying admin access...</Text>
       </Container>
     );
   }
+
+  const pendingWithdrawals = Array.isArray(withdrawals)
+    ? withdrawals.filter((w: any) => w.status === 'pending')
+    : [];
 
   return (
     <Container safeArea edges={['top']} style={styles.container}>
@@ -141,6 +193,22 @@ export default function AdminDashboard() {
         <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
           <Ionicons name="close" size={24} color={colors.text} />
         </TouchableOpacity>
+      </View>
+
+      {/* Stats bar */}
+      <View style={styles.statsBar}>
+        <View style={styles.statItem}>
+          <Text style={styles.statNum}>{stats?.totalUsers || 0}</Text>
+          <Text style={styles.statLabel}>Users</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={styles.statNum}>{stats?.pendingWithdrawals || 0}</Text>
+          <Text style={styles.statLabel}>Pending</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={styles.statNum}>{stats?.dailyEmission || 0}</Text>
+          <Text style={styles.statLabel}>Emitted</Text>
+        </View>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsContainer}>
@@ -161,13 +229,13 @@ export default function AdminDashboard() {
         {activeTab === 'withdrawals' && (
           <View>
             <Text style={styles.sectionTitle}>Pending Withdrawals</Text>
-            {withdrawals?.filter((w: any) => w.status === 'pending').map((w: any) => (
+            {pendingWithdrawals.map((w: any) => (
               <Card key={w.id} style={styles.adminCard}>
                 <View style={styles.cardHeader}>
-                  <Text style={styles.userEmail}>{w.userId}</Text>
-                  <Text style={styles.amount}>{w.amount} DULP</Text>
+                  <Text style={styles.userEmail}>{w.userId?.substring(0, 12)}...</Text>
+                  <Text style={styles.amount}>{Number(w.amount).toLocaleString()} DULP</Text>
                 </View>
-                <Text style={styles.address}>To: {w.address}</Text>
+                <Text style={styles.address}>To: {w.address || 'No address'}</Text>
                 <View style={styles.actions}>
                   <Button
                     size="sm"
@@ -188,33 +256,40 @@ export default function AdminDashboard() {
                 </View>
               </Card>
             ))}
-            {(!withdrawals || withdrawals.filter((w: any) => w.status === 'pending').length === 0) && (
-              <Text style={styles.emptyText}>No pending withdrawals</Text>
+            {pendingWithdrawals.length === 0 && (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="checkmark-circle-outline" size={48} color={colors.textTertiary} />
+                <Text style={styles.emptyText}>No pending withdrawals</Text>
+              </View>
             )}
           </View>
         )}
 
         {activeTab === 'users' && (
           <View>
-            <Text style={styles.sectionTitle}>User Management</Text>
-            {users?.map((u: any) => (
+            <Text style={styles.sectionTitle}>User Management ({Array.isArray(users) ? users.length : 0})</Text>
+            {Array.isArray(users) && users.map((u: any) => (
               <Card key={u.id} style={styles.adminCard}>
                 <View style={styles.cardHeader}>
                   <View style={styles.userInfo}>
                     <Avatar source={u.avatarUrl ? { uri: u.avatarUrl } : undefined} size="sm" />
                     <View style={{ marginLeft: 8 }}>
-                      <Text style={styles.userEmail}>{u.displayName}</Text>
-                      <Text style={styles.tinyText}>{u.userId}</Text>
+                      <Text style={styles.userName}>{u.displayName || 'Unknown'}</Text>
+                      <Text style={styles.tinyText}>{u.role || 'user'} · {u.userId?.substring(0, 10)}...</Text>
                     </View>
                   </View>
-                  <Text style={styles.amount}>{u.balance.toLocaleString()} DULP</Text>
+                  <Text style={styles.amount}>{Number(u.balance || 0).toLocaleString()} DULP</Text>
                 </View>
                 <View style={styles.actions}>
                   <Button
                     size="sm"
                     variant="outline"
                     onPress={() => {
-                      setEditingUser(u);
+                      setEditingUser({
+                        ...u,
+                        balance: Number(u.balance || 0),
+                        role: u.role || 'user',
+                      });
                       setIsUserModalVisible(true);
                     }}
                     style={{ flex: 1 }}
@@ -230,31 +305,31 @@ export default function AdminDashboard() {
         {activeTab === 'tasks' && (
           <View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
-              <Text style={styles.sectionTitle}>Tasks</Text>
+              <Text style={styles.sectionTitle}>Tasks ({Array.isArray(tasks) ? tasks.length : 0})</Text>
               <Button
                 size="sm"
                 variant="primary"
                 onPress={() => {
-                  setEditingTask({ title: '', reward_amount: 0, category: 'daily', type: 'social', link: '', is_active: 1 });
+                  setEditingTask({ title: '', rewardAmount: 0, category: 'daily', type: 'social', link: '', isActive: 1 });
                   setIsTaskModalVisible(true);
                 }}
               >
                 Add Task
               </Button>
             </View>
-            {tasks?.map((t: any) => (
+            {Array.isArray(tasks) && tasks.map((t: any) => (
               <Card key={t.id} style={styles.adminCard}>
                 <View style={styles.cardHeader}>
-                  <Text style={styles.userEmail}>{t.title}</Text>
-                  <Text style={styles.amount}>{t.reward_amount} DULP</Text>
+                  <Text style={styles.userName}>{t.title}</Text>
+                  <Text style={styles.amount}>{Number(t.rewardAmount || 0)} DULP</Text>
                 </View>
-                <Text style={styles.tinyText}>{t.category} | {t.type}</Text>
+                <Text style={styles.tinyText}>{t.category} | {t.type} | {Number(t.isActive) ? 'Active' : 'Inactive'}</Text>
                 <View style={styles.actions}>
                   <Button
                     size="sm"
                     variant="outline"
                     onPress={() => {
-                      setEditingTask(t);
+                      setEditingTask({ ...t, rewardAmount: Number(t.rewardAmount || 0) });
                       setIsTaskModalVisible(true);
                     }}
                     style={{ flex: 1, marginRight: 8 }}
@@ -265,10 +340,19 @@ export default function AdminDashboard() {
                     size="sm"
                     variant="outline"
                     onPress={() => {
-                      Alert.alert('Confirm', 'Are you sure you want to delete this task?', [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Delete', style: 'destructive', onPress: () => blink.functions.invoke('admin-action', { body: { action: 'delete_task', taskId: t.id } }).then(() => queryClient.invalidateQueries({ queryKey: ['admin_tasks'] })) }
-                      ]);
+                      const doDelete = () => {
+                        blink.functions.invoke('admin-action', {
+                          body: { action: 'delete_task', taskId: t.id }
+                        }).then(() => queryClient.invalidateQueries({ queryKey: ['admin_tasks'] }));
+                      };
+                      if (Platform.OS === 'web') {
+                        if (confirm('Are you sure you want to delete this task?')) doDelete();
+                      } else {
+                        Alert.alert('Confirm', 'Are you sure you want to delete this task?', [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Delete', style: 'destructive', onPress: doDelete }
+                        ]);
+                      }
                     }}
                     style={{ flex: 1, borderColor: colors.error }}
                   >
@@ -285,51 +369,105 @@ export default function AdminDashboard() {
             <Text style={styles.sectionTitle}>Daily Token Emissions</Text>
             <Card style={styles.adminCard}>
               <Text style={styles.statLabel}>Total Emitted Today</Text>
-              <Text style={styles.statValue}>{stats?.dailyEmission || 0} DULP</Text>
-              <Text style={styles.statSub}>Limit: 100,000 DULP</Text>
+              <Text style={styles.emissionValue}>{stats?.dailyEmission || 0} DULP</Text>
+              <View style={styles.emissionBar}>
+                <View style={[styles.emissionFill, { width: `${Math.min(100, ((stats?.dailyEmission || 0) / 100000) * 100)}%` }]} />
+              </View>
+              <Text style={styles.tinyText}>Limit: 100,000 DULP / day</Text>
             </Card>
           </View>
         )}
-        
-        {/* Other tabs would go here */}
-        {activeTab !== 'withdrawals' && activeTab !== 'users' && activeTab !== 'tasks' && activeTab !== 'emissions' && (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="construct-outline" size={64} color={colors.textTertiary} />
-            <Text style={styles.emptyText}>Under construction</Text>
-          </View>
-        )}
+
+        <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Task Modal (Simplified for the edit_file tool, ideally separate components) */}
-      {isTaskModalVisible && (
+      {/* Task Modal */}
+      {isTaskModalVisible && editingTask && (
         <View style={styles.modalOverlay}>
           <Card style={styles.modalContent}>
-            <Text style={styles.modalTitle}>{editingTask?.id ? 'Edit Task' : 'Add Task'}</Text>
+            <Text style={styles.modalTitle}>{editingTask.id ? 'Edit Task' : 'Add Task'}</Text>
             <ScrollView>
-              <Input label="Title" value={editingTask.title} onChangeText={(text) => setEditingTask({ ...editingTask, title: text })} />
-              <Input label="Reward" value={String(editingTask.reward_amount)} onChangeText={(text) => setEditingTask({ ...editingTask, reward_amount: Number(text) })} keyboardType="numeric" />
-              <Input label="Category" value={editingTask.category} onChangeText={(text) => setEditingTask({ ...editingTask, category: text })} />
-              <Input label="Type" value={editingTask.type} onChangeText={(text) => setEditingTask({ ...editingTask, type: text })} />
-              <Input label="Link" value={editingTask.link} onChangeText={(text) => setEditingTask({ ...editingTask, link: text })} />
+              <Input
+                label="Title"
+                value={editingTask.title || ''}
+                onChangeText={(text) => setEditingTask({ ...editingTask, title: text })}
+              />
+              <Input
+                label="Reward Amount"
+                value={String(editingTask.rewardAmount || 0)}
+                onChangeText={(text) => setEditingTask({ ...editingTask, rewardAmount: Number(text) || 0 })}
+                keyboardType="numeric"
+              />
+              <Input
+                label="Category (daily, social, survey, sponsored)"
+                value={editingTask.category || ''}
+                onChangeText={(text) => setEditingTask({ ...editingTask, category: text })}
+              />
+              <Input
+                label="Type (social, watch, survey, offer)"
+                value={editingTask.type || ''}
+                onChangeText={(text) => setEditingTask({ ...editingTask, type: text })}
+              />
+              <Input
+                label="Link URL"
+                value={editingTask.link || ''}
+                onChangeText={(text) => setEditingTask({ ...editingTask, link: text })}
+              />
+              <Input
+                label="Description"
+                value={editingTask.description || ''}
+                onChangeText={(text) => setEditingTask({ ...editingTask, description: text })}
+                multiline
+              />
             </ScrollView>
             <View style={styles.modalActions}>
-              <Button variant="outline" onPress={() => setIsTaskModalVisible(false)} style={{ flex: 1, marginRight: 8 }}>Cancel</Button>
-              <Button variant="primary" onPress={() => handleTaskSubmit.mutate(editingTask)} style={{ flex: 1 }}>Save</Button>
+              <Button variant="outline" onPress={() => { setIsTaskModalVisible(false); setEditingTask(null); }} style={{ flex: 1, marginRight: 8 }}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={handleTaskSubmit.isPending}
+                onPress={() => handleTaskSubmit.mutate(editingTask)}
+                style={{ flex: 1 }}
+              >
+                Save
+              </Button>
             </View>
           </Card>
         </View>
       )}
 
       {/* User Modal */}
-      {isUserModalVisible && (
+      {isUserModalVisible && editingUser && (
         <View style={styles.modalOverlay}>
           <Card style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Edit User</Text>
-            <Input label="Balance" value={String(editingUser.balance)} onChangeText={(text) => setEditingUser({ ...editingUser, balance: Number(text) })} keyboardType="numeric" />
-            <Input label="Role" value={editingUser.role} onChangeText={(text) => setEditingUser({ ...editingUser, role: text })} />
+            <Text style={styles.modalTitle}>Edit User: {editingUser.displayName}</Text>
+            <Input
+              label="Balance"
+              value={String(editingUser.balance || 0)}
+              onChangeText={(text) => setEditingUser({ ...editingUser, balance: Number(text) || 0 })}
+              keyboardType="numeric"
+            />
+            <Input
+              label="Role (user, admin)"
+              value={editingUser.role || 'user'}
+              onChangeText={(text) => setEditingUser({ ...editingUser, role: text })}
+            />
             <View style={styles.modalActions}>
-              <Button variant="outline" onPress={() => setIsUserModalVisible(false)} style={{ flex: 1, marginRight: 8 }}>Cancel</Button>
-              <Button variant="primary" onPress={() => handleUserUpdate.mutate({ targetUserId: editingUser.userId, updates: { balance: editingUser.balance, role: editingUser.role } })} style={{ flex: 1 }}>Save</Button>
+              <Button variant="outline" onPress={() => { setIsUserModalVisible(false); setEditingUser(null); }} style={{ flex: 1, marginRight: 8 }}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={handleUserUpdate.isPending}
+                onPress={() => handleUserUpdate.mutate({
+                  targetUserId: editingUser.userId,
+                  updates: { balance: editingUser.balance, role: editingUser.role }
+                })}
+                style={{ flex: 1 }}
+              >
+                Save
+              </Button>
             </View>
           </Card>
         </View>
@@ -347,6 +485,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    gap: spacing.md,
   },
   loadingText: {
     ...typography.body,
@@ -370,6 +509,26 @@ const styles = StyleSheet.create({
   },
   closeBtn: {
     padding: spacing.sm,
+  },
+  statsBar: {
+    flexDirection: 'row',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.secondaryTint,
+    gap: spacing.md,
+  },
+  statItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statNum: {
+    ...typography.h3,
+    color: colors.primary,
+  },
+  statLabel: {
+    ...typography.tiny,
+    color: colors.textTertiary,
   },
   tabsContainer: {
     padding: spacing.md,
@@ -408,9 +567,14 @@ const styles = StyleSheet.create({
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: spacing.sm,
   },
   userEmail: {
+    ...typography.small,
+    color: colors.textSecondary,
+  },
+  userName: {
     ...typography.smallBold,
     color: colors.text,
   },
@@ -425,19 +589,24 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: 'row',
+    marginTop: spacing.sm,
   },
-  statLabel: {
-    ...typography.small,
-    color: colors.textSecondary,
-  },
-  statValue: {
+  emissionValue: {
     ...typography.h1,
     color: colors.primary,
-    marginVertical: spacing.xs,
+    marginVertical: spacing.sm,
   },
-  statSub: {
-    ...typography.tiny,
-    color: colors.textTertiary,
+  emissionBar: {
+    height: 8,
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: borderRadius.full,
+    marginVertical: spacing.sm,
+    overflow: 'hidden',
+  },
+  emissionFill: {
+    height: '100%',
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.full,
   },
   userInfo: {
     flexDirection: 'row',
@@ -473,10 +642,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
   },
   emptyContainer: {
-    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 100,
+    paddingVertical: spacing.xxxl,
   },
   emptyText: {
     ...typography.body,

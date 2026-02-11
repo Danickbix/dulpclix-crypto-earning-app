@@ -20,14 +20,18 @@ export default function ProfileScreen() {
     queryKey: ['referralStats', user?.id],
     queryFn: async () => {
       if (!user || !profile) return { count: 0, earnings: 0 };
-      const referrals = await blink.db.table('referrals').list({
-        where: { referrerId: user.id }
-      });
-      const earnings = await blink.db.table('transactions').list({
-        where: { userId: user.id, type: 'referral' }
-      });
-      const totalEarnings = earnings.reduce((sum, t) => sum + (t as any).amount, 0);
-      return { count: referrals.length, earnings: totalEarnings };
+      try {
+        const referredUsers = await blink.db.table('profiles').list({
+          where: { referredBy: profile.referralCode }
+        });
+        const earnings = await blink.db.table('transactions').list({
+          where: { userId: user.id, type: 'referral' }
+        });
+        const totalEarnings = earnings.reduce((sum: number, t: any) => sum + Number(t.amount), 0);
+        return { count: referredUsers.length, earnings: totalEarnings };
+      } catch {
+        return { count: 0, earnings: 0 };
+      }
     },
     enabled: !!user && !!profile,
   });
