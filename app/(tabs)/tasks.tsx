@@ -87,12 +87,6 @@ export default function TasksScreen() {
   });
 
   const handleTaskPress = async (task: Task) => {
-    // Some tasks might be level gated in the future
-    if (task.category === 'premium' && !profile?.isActivated) {
-      Alert.alert('Locked', 'Account activation required for premium tasks.');
-      return;
-    }
-
     if (task.link) {
       await Linking.openURL(task.link);
       // For social tasks, we wait a bit before allowing claim in a real app

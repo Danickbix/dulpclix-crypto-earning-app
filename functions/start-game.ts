@@ -44,12 +44,6 @@ async function handler(req: Request): Promise<Response> {
     const xpProfileSearch = await blink.db.table("xp_profiles").list({ where: { user_id: userId } });
     const currentLevel = xpProfileSearch.length > 0 ? Number(xpProfileSearch[0].level) : 1;
 
-    // Advanced games require activation
-    const advancedGames = ["spin_wheel", "puzzle_game", "reaction_sprint"];
-    if (advancedGames.includes(gameType) && !profile.isActivated) {
-      return new Response(JSON.stringify({ error: "Activation required for advanced games" }), { status: 403, headers: corsHeaders });
-    }
-
     // Level Gates
     const levelGates: Record<string, number> = {
       "tap_race": 1,

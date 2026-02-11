@@ -62,30 +62,9 @@ export default function DashboardScreen() {
 
         <BalanceWidget
           balance={profile?.balance || 0}
-          isActivated={profile?.isActivated}
           level={currentLevel}
           xpProgress={xpProgress}
         />
-
-        {!profile?.isActivated && (
-          <Card style={styles.activationCard} variant="elevated">
-            <View style={styles.activationHeader}>
-              <Ionicons name="lock-closed" size={24} color={colors.warning} />
-              <Text style={styles.activationTitle}>Account Not Activated</Text>
-            </View>
-            <Text style={styles.activationText}>
-              Activate your account with a code to unlock premium games, tasks, and withdrawals.
-            </Text>
-            <Button
-              size="sm"
-              variant="primary"
-              onPress={() => router.push('/profile')}
-              style={styles.activationBtn}
-            >
-              Enter Code
-            </Button>
-          </Card>
-        )}
 
         <StreakWidget count={profile?.streakCount || 0} />
 
@@ -122,30 +101,5 @@ const styles = StyleSheet.create({
   },
   section: {
     padding: spacing.lg,
-  },
-  activationCard: {
-    margin: spacing.lg,
-    padding: spacing.md,
-    backgroundColor: colors.backgroundSecondary,
-    borderWidth: 1,
-    borderColor: colors.warning + '40',
-  },
-  activationHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  activationTitle: {
-    ...typography.bodyBold,
-    color: colors.warning,
-    marginLeft: spacing.sm,
-  },
-  activationText: {
-    ...typography.small,
-    color: colors.textSecondary,
-    marginBottom: spacing.md,
-  },
-  activationBtn: {
-    alignSelf: 'flex-start',
   },
 });

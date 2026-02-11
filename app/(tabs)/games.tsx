@@ -49,10 +49,6 @@ export default function GamesScreen() {
       Alert.alert('Level Locked', `You need to be Level ${game.level} to play this game.`);
       return;
     }
-    if (game.advanced && !profile?.isActivated) {
-      Alert.alert('Locked', 'Account activation required for advanced games.');
-      return;
-    }
     setActiveGame(game.id);
   };
 
@@ -66,7 +62,7 @@ export default function GamesScreen() {
 
         <View style={styles.grid}>
           {GAMES.map((game, index) => {
-            const isLocked = game.level > currentLevel || (game.advanced && !profile?.isActivated);
+            const isLocked = game.level > currentLevel;
             
             return (
               <Animated.View 
@@ -94,7 +90,7 @@ export default function GamesScreen() {
                   {isLocked ? (
                     <View style={styles.lockedBadge}>
                       <Text style={styles.lockedText}>
-                        {game.level > currentLevel ? `Unlock at Lvl ${game.level}` : 'Requires Activation'}
+                        {`Unlock at Lvl ${game.level}`}
                       </Text>
                     </View>
                   ) : (

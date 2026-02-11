@@ -55,11 +55,7 @@ async function handler(req: Request): Promise<Response> {
       return new Response(JSON.stringify({ error: "Insufficient balance" }), { status: 400, headers: corsHeaders });
     }
 
-    // 2. Activation & Level Check
-    if (!userProfile.isActivated) {
-      return new Response(JSON.stringify({ error: "Account activation required for withdrawals" }), { status: 403, headers: corsHeaders });
-    }
-
+    // 2. Level Check
     const xpProfileSearch = await blink.db.table("xp_profiles").list({ where: { user_id: userId } });
     const currentLevel = xpProfileSearch.length > 0 ? Number(xpProfileSearch[0].level) : 1;
 

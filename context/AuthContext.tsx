@@ -14,7 +14,6 @@ interface Profile {
   streakCount: number;
   lastStreakAt: string | null;
   createdAt: string;
-  isActivated: number;
   role: string;
   twitterHandle: string | null;
   telegramUsername: string | null;

@@ -8,7 +8,6 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 interface BalanceWidgetProps {
   balance: number;
   tokenName?: string;
-  isActivated?: boolean | number;
   level?: number;
   xpProgress?: number;
 }
@@ -16,7 +15,6 @@ interface BalanceWidgetProps {
 export function BalanceWidget({ 
   balance, 
   tokenName = 'DULP', 
-  isActivated,
   level = 1,
   xpProgress = 0
 }: BalanceWidgetProps) {
@@ -42,11 +40,6 @@ export function BalanceWidget({
       <View style={styles.xpSection}>
         <View style={styles.xpHeader}>
           <Text style={styles.levelText}>Level {level}</Text>
-          <View style={[styles.statusBadge, isActivated ? styles.activeBadge : styles.inactiveBadge]}>
-            <Text style={[styles.statusText, isActivated ? styles.activeStatusText : styles.inactiveStatusText]}>
-              {isActivated ? 'Activated' : 'Unactivated'}
-            </Text>
-          </View>
         </View>
         <View style={styles.xpBarContainer}>
           <View style={[styles.xpBarFill, { width: `${xpProgress * 100}%` }]} />
@@ -129,27 +122,6 @@ const styles = StyleSheet.create({
   levelText: {
     ...typography.smallBold,
     color: colors.text,
-  },
-  statusBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: borderRadius.full,
-  },
-  activeBadge: {
-    backgroundColor: colors.success + '20',
-  },
-  inactiveBadge: {
-    backgroundColor: colors.warning + '20',
-  },
-  statusText: {
-    ...typography.tiny,
-    fontWeight: '700',
-  },
-  activeStatusText: {
-    color: colors.success,
-  },
-  inactiveStatusText: {
-    color: colors.warning,
   },
   xpBarContainer: {
     height: 8,
