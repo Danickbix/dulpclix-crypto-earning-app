@@ -229,6 +229,36 @@ async function handler(req: Request): Promise<Response> {
         });
       }
 
+      case "list_store_items": {
+        const storeItems = await blink.db.table("store_items").list({
+          orderBy: { createdAt: "desc" },
+        });
+        return new Response(JSON.stringify(storeItems), {
+          headers: corsHeaders,
+        });
+      }
+
+      case "upsert_store_item": {
+        const { item } = body;
+        if (item.id) {
+          const { id, ...updateData } = item;
+          await blink.db.table("store_items").update(id, updateData);
+        } else {
+          await blink.db.table("store_items").create(item);
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: corsHeaders,
+        });
+      }
+
+      case "delete_store_item": {
+        const { itemId: storeItemId } = body;
+        await blink.db.table("store_items").delete(storeItemId);
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: corsHeaders,
+        });
+      }
+
       case "list_fraud_flags": {
         const flags = await blink.db.table("fraud_flags").list({
           orderBy: { createdAt: "desc" },

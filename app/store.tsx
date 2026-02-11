@@ -26,15 +26,16 @@ export default function StoreScreen() {
       const response = await blink.functions.invoke('purchase-item', {
         body: { itemId }
       });
-      if (response.error) {
-        throw new Error(response.error);
+      const data = response?.data || response;
+      if (data?.error) {
+        throw new Error(data.error);
       }
-      return response;
+      return data;
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
       queryClient.invalidateQueries({ queryKey: ['store_items'] });
-      Alert.alert('Success', `Purchased ${data.item || 'item'} successfully!`);
+      Alert.alert('Success', `Purchased ${data?.item || 'item'} successfully!`);
     },
     onError: (error: any) => {
       Alert.alert('Error', error.message || 'Failed to purchase item.');

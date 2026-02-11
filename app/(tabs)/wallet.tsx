@@ -48,11 +48,12 @@ export default function WalletScreen() {
         }
       });
 
-      if (response.error) {
-        throw new Error(response.error);
+      const data = response?.data || response;
+      if (data?.error) {
+        throw new Error(data.error);
       }
 
-      return response.data;
+      return data;
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
@@ -60,7 +61,7 @@ export default function WalletScreen() {
       setShowWithdraw(false);
       setWithdrawAmount('');
       setWithdrawAddress('');
-      Alert.alert('Success', data.message);
+      Alert.alert('Success', data?.message || 'Withdrawal submitted successfully.');
     },
     onError: (error: any) => {
       Alert.alert('Withdrawal Failed', error.message || 'Something went wrong');

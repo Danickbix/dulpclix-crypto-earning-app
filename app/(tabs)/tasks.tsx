@@ -113,7 +113,10 @@ export default function TasksScreen() {
   };
 
   const isCompleted = (taskId: string) => {
-    return userTasks?.some(ut => ut.taskId === taskId && ut.status === 'completed') || false;
+    return userTasks?.some((ut: any) => {
+      const utTaskId = ut.taskId || ut.task_id;
+      return utTaskId === taskId && ut.status === 'completed';
+    }) || false;
   };
 
   const onRefresh = async () => {
@@ -147,11 +150,12 @@ export default function TasksScreen() {
           />
         }
         ListEmptyComponent={
-          !isLoadingTasks && (
+          !isLoadingTasks ? (
             <View style={styles.empty}>
               <Text style={styles.emptyText}>No tasks available right now.</Text>
+              <Text style={styles.emptyText}>Pull down to refresh.</Text>
             </View>
-          )
+          ) : null
         }
       />
     </Container>

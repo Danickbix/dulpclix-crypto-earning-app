@@ -52,36 +52,34 @@ async function handler(req: Request): Promise<Response> {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
 
-    // Check daily completion limit
-    const dailyCompletions = await blink.db.table("user_tasks").count({
-      where: {
-        AND: [
-          { userId: userId },
-          { taskId: taskId },
-          { completedAt: { gte: todayStart } }
-        ]
-      }
+    // Check daily completion limit & cooldown
+    const userTaskHistory = await blink.db.table("user_tasks").list({
+      where: { userId: userId, taskId: taskId },
+      orderBy: { completedAt: "desc" },
+      limit: 100
     });
 
-    if (dailyCompletions >= Number(task.max_completions_per_day)) {
+    // Count today's completions
+    const dailyCompletions = userTaskHistory.filter((ut: any) => {
+      const completedAt = ut.completedAt || ut.completed_at;
+      return completedAt && completedAt >= todayStart;
+    }).length;
+
+    if (dailyCompletions >= Number(task.max_completions_per_day || 1)) {
       return new Response(JSON.stringify({ error: "Daily limit reached for this task" }), { status: 400, headers: corsHeaders });
     }
 
     // Check cooldown
-    if (Number(task.cooldown_minutes) > 0) {
-      const lastCompletion = await blink.db.table("user_tasks").list({
-        where: { userId: userId, taskId: taskId },
-        orderBy: { completedAt: "desc" },
-        limit: 1
-      });
-
-      if (lastCompletion.length > 0) {
-        const lastTime = new Date(lastCompletion[0].completedAt);
+    if (Number(task.cooldown_minutes) > 0 && userTaskHistory.length > 0) {
+      const lastCompletedAt = userTaskHistory[0].completedAt || userTaskHistory[0].completed_at;
+      if (lastCompletedAt) {
+        const lastTime = new Date(lastCompletedAt);
         const diffMs = now.getTime() - lastTime.getTime();
         const diffMins = diffMs / (1000 * 60);
         
         if (diffMins < Number(task.cooldown_minutes)) {
-          return new Response(JSON.stringify({ error: "Task in cooldown" }), { status: 400, headers: corsHeaders });
+          const remainingMins = Math.ceil(Number(task.cooldown_minutes) - diffMins);
+          return new Response(JSON.stringify({ error: `Task in cooldown. Try again in ${remainingMins} minute(s).` }), { status: 400, headers: corsHeaders });
         }
       }
     }
@@ -164,39 +162,45 @@ async function handler(req: Request): Promise<Response> {
 
     // Update profile
     const profileUpdate: any = { balance: newBalance };
-    if (task.type === "checkin") {
-      profileUpdate.streakCount = (Number(userProfile.streakCount) || 0) + 1;
+    const taskType = task.type || task.category;
+    if (taskType === "checkin") {
+      const currentStreak = Number(userProfile.streakCount || userProfile.streak_count) || 0;
+      profileUpdate.streakCount = currentStreak + 1;
       profileUpdate.lastStreakAt = now.toISOString();
     }
     
     await blink.db.table("profiles").update(userProfile.id, profileUpdate);
 
     // 6. Referral Commission (10%)
-    // SDK returns camelCase, but raw DB may use snake_case - handle both
     const referredByCode = userProfile.referredBy || userProfile.referred_by;
     if (referredByCode) {
-      const referrers = await blink.db.table("profiles").list({
-        where: { referralCode: referredByCode }
-      });
-      
-      const referrer = referrers[0];
-      if (referrer) {
-        const commission = Math.floor(rewardAmount * 0.1);
-        if (commission > 0) {
-          const referrerUserId = referrer.userId || referrer.user_id;
-          const newReferrerBalance = (Number(referrer.balance) || 0) + commission;
-          
-          await blink.db.table("profiles").update(referrer.id, {
-            balance: newReferrerBalance
-          });
+      try {
+        const referrers = await blink.db.table("profiles").list({
+          where: { referralCode: referredByCode }
+        });
+        
+        const referrer = referrers[0];
+        if (referrer) {
+          const commission = Math.floor(rewardAmount * 0.1);
+          if (commission > 0) {
+            const referrerUserId = referrer.userId || referrer.user_id;
+            const newReferrerBalance = (Number(referrer.balance) || 0) + commission;
+            
+            await blink.db.table("profiles").update(referrer.id, {
+              balance: newReferrerBalance
+            });
 
-          await blink.db.table("transactions").create({
-            userId: referrerUserId,
-            amount: commission,
-            type: "referral",
-            description: `Referral commission from ${userProfile.displayName || userProfile.display_name || 'a friend'}`
-          });
+            await blink.db.table("transactions").create({
+              userId: referrerUserId,
+              amount: commission,
+              type: "referral",
+              description: `Referral commission from ${userProfile.displayName || userProfile.display_name || 'a friend'}`
+            });
+          }
         }
+      } catch (refErr) {
+        console.error("Referral commission error (non-critical):", refErr);
+        // Don't fail the task completion if referral commission fails
       }
     }
 

@@ -65,6 +65,8 @@ export default function AdminDashboard() {
   const { user, profile: myProfile } = useAuth();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('withdrawals');
+  const [isStoreModalVisible, setIsStoreModalVisible] = useState(false);
+  const [editingStoreItem, setEditingStoreItem] = useState<any>(null);
   const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<any>(null);
   const [isUserModalVisible, setIsUserModalVisible] = useState(false);
@@ -104,6 +106,17 @@ export default function AdminDashboard() {
       return response?.data || response || [];
     },
     enabled: isReady && activeTab === 'tasks',
+  });
+
+  const { data: storeItems } = useQuery({
+    queryKey: ['admin_store_items'],
+    queryFn: async () => {
+      const response = await blink.functions.invoke('admin-action', {
+        body: { action: 'list_store_items' }
+      });
+      return response?.data || response || [];
+    },
+    enabled: isReady && activeTab === 'store',
   });
 
   const { data: stats } = useQuery({
@@ -147,6 +160,23 @@ export default function AdminDashboard() {
     },
     onError: (err: any) => {
       Alert.alert('Error', err.message || 'Failed to save task');
+    }
+  });
+
+  const handleStoreItemSubmit = useMutation({
+    mutationFn: async (item: any) => {
+      return await blink.functions.invoke('admin-action', {
+        body: { action: 'upsert_store_item', item }
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin_store_items'] });
+      setIsStoreModalVisible(false);
+      setEditingStoreItem(null);
+      Alert.alert('Success', 'Store item saved successfully.');
+    },
+    onError: (err: any) => {
+      Alert.alert('Error', err.message || 'Failed to save store item');
     }
   });
 
@@ -212,7 +242,7 @@ export default function AdminDashboard() {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsContainer}>
-        {['withdrawals', 'users', 'tasks', 'emissions'].map((tab) => (
+        {['withdrawals', 'users', 'tasks', 'store', 'emissions'].map((tab) => (
           <TouchableOpacity
             key={tab}
             onPress={() => setActiveTab(tab)}
@@ -364,6 +394,74 @@ export default function AdminDashboard() {
           </View>
         )}
 
+        {activeTab === 'store' && (
+          <View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
+              <Text style={styles.sectionTitle}>Store Items ({Array.isArray(storeItems) ? storeItems.length : 0})</Text>
+              <Button
+                size="sm"
+                variant="primary"
+                onPress={() => {
+                  setEditingStoreItem({ name: '', description: '', price: 0, category: 'booster', type: 'booster', value: 0, durationHours: 24, isActive: 1 });
+                  setIsStoreModalVisible(true);
+                }}
+              >
+                Add Item
+              </Button>
+            </View>
+            {Array.isArray(storeItems) && storeItems.map((item: any) => (
+              <Card key={item.id} style={styles.adminCard}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.userName}>{item.name}</Text>
+                  <Text style={styles.amount}>{Number(item.price || 0)} DULP</Text>
+                </View>
+                <Text style={styles.tinyText}>{item.category} | {item.type} | {Number(item.isActive) ? 'Active' : 'Inactive'}</Text>
+                <View style={styles.actions}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onPress={() => {
+                      setEditingStoreItem({ ...item, price: Number(item.price || 0), durationHours: Number(item.durationHours || 24) });
+                      setIsStoreModalVisible(true);
+                    }}
+                    style={{ flex: 1, marginRight: 8 }}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onPress={() => {
+                      const doDelete = () => {
+                        blink.functions.invoke('admin-action', {
+                          body: { action: 'delete_store_item', itemId: item.id }
+                        }).then(() => queryClient.invalidateQueries({ queryKey: ['admin_store_items'] }));
+                      };
+                      if (Platform.OS === 'web') {
+                        if (confirm('Delete this store item?')) doDelete();
+                      } else {
+                        Alert.alert('Confirm', 'Delete this store item?', [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Delete', style: 'destructive', onPress: doDelete }
+                        ]);
+                      }
+                    }}
+                    style={{ flex: 1, borderColor: colors.error }}
+                  >
+                    <Text style={{ color: colors.error }}>Delete</Text>
+                  </Button>
+                </View>
+              </Card>
+            ))}
+            {(!storeItems || (Array.isArray(storeItems) && storeItems.length === 0)) && (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="cart-outline" size={48} color={colors.textTertiary} />
+                <Text style={styles.emptyText}>No store items yet. Add one above.</Text>
+              </View>
+            )}
+          </View>
+        )}
+
         {activeTab === 'emissions' && (
           <View>
             <Text style={styles.sectionTitle}>Daily Token Emissions</Text>
@@ -428,6 +526,63 @@ export default function AdminDashboard() {
                 variant="primary"
                 loading={handleTaskSubmit.isPending}
                 onPress={() => handleTaskSubmit.mutate(editingTask)}
+                style={{ flex: 1 }}
+              >
+                Save
+              </Button>
+            </View>
+          </Card>
+        </View>
+      )}
+
+      {/* Store Item Modal */}
+      {isStoreModalVisible && editingStoreItem && (
+        <View style={styles.modalOverlay}>
+          <Card style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{editingStoreItem.id ? 'Edit Store Item' : 'Add Store Item'}</Text>
+            <ScrollView>
+              <Input
+                label="Name"
+                value={editingStoreItem.name || ''}
+                onChangeText={(text) => setEditingStoreItem({ ...editingStoreItem, name: text })}
+              />
+              <Input
+                label="Description"
+                value={editingStoreItem.description || ''}
+                onChangeText={(text) => setEditingStoreItem({ ...editingStoreItem, description: text })}
+                multiline
+              />
+              <Input
+                label="Price (DULP)"
+                value={String(editingStoreItem.price || 0)}
+                onChangeText={(text) => setEditingStoreItem({ ...editingStoreItem, price: Number(text) || 0 })}
+                keyboardType="numeric"
+              />
+              <Input
+                label="Category (booster, powerup, cosmetic)"
+                value={editingStoreItem.category || ''}
+                onChangeText={(text) => setEditingStoreItem({ ...editingStoreItem, category: text })}
+              />
+              <Input
+                label="Type (booster, powerup, cosmetic)"
+                value={editingStoreItem.type || ''}
+                onChangeText={(text) => setEditingStoreItem({ ...editingStoreItem, type: text })}
+              />
+              <Input
+                label="Duration (hours, for boosts)"
+                value={String(editingStoreItem.durationHours || 24)}
+                onChangeText={(text) => setEditingStoreItem({ ...editingStoreItem, durationHours: Number(text) || 24 })}
+                keyboardType="numeric"
+              />
+            </ScrollView>
+            <View style={styles.modalActions}>
+              <Button variant="outline" onPress={() => { setIsStoreModalVisible(false); setEditingStoreItem(null); }} style={{ flex: 1, marginRight: 8 }}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={handleStoreItemSubmit.isPending}
+                onPress={() => handleStoreItemSubmit.mutate(editingStoreItem)}
                 style={{ flex: 1 }}
               >
                 Save

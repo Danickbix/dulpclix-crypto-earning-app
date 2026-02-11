@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Share, Pressable, Alert } from 'react-native';
 import { Container, Button, Card, Avatar, Input } from '@/components/ui';
 import { colors, typography, spacing, borderRadius, shadows } from '@/constants/design';
 import { useAuth } from '@/context/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { blink } from '@/lib/blink';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
@@ -15,11 +15,13 @@ export default function ProfileScreen() {
   const { signOut, user, profile, isLoading } = useAuth();
   const queryClient = useQueryClient();
   const router = useRouter();
+  const [referralInput, setReferralInput] = useState('');
+  const [showReferralInput, setShowReferralInput] = useState(false);
 
   const { data: referralStats } = useQuery({
-    queryKey: ['referralStats', user?.id],
+    queryKey: ['referralStats', user?.id, profile?.referralCode],
     queryFn: async () => {
-      if (!user || !profile) return { count: 0, earnings: 0 };
+      if (!user || !profile?.referralCode) return { count: 0, earnings: 0 };
       try {
         const referredUsers = await blink.db.table('profiles').list({
           where: { referredBy: profile.referralCode }
@@ -34,6 +36,37 @@ export default function ProfileScreen() {
       }
     },
     enabled: !!user && !!profile,
+  });
+
+  const applyReferralCode = useMutation({
+    mutationFn: async (code: string) => {
+      if (!user || !profile) throw new Error('Not authenticated');
+      if (profile.referredBy) throw new Error('You already have a referral code applied');
+      const upperCode = code.trim().toUpperCase();
+      if (upperCode === profile.referralCode) throw new Error('You cannot use your own referral code');
+      
+      // Validate that the referral code exists
+      const referrerProfiles = await blink.db.table('profiles').list({
+        where: { referralCode: upperCode }
+      });
+      if (referrerProfiles.length === 0) throw new Error('Invalid referral code');
+      
+      // Apply the referral code
+      await blink.db.table('profiles').update(profile.id, {
+        referredBy: upperCode
+      });
+      return upperCode;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      queryClient.invalidateQueries({ queryKey: ['referralStats'] });
+      setReferralInput('');
+      setShowReferralInput(false);
+      Alert.alert('Success', 'Referral code applied! You and your referrer will earn commissions.');
+    },
+    onError: (error: any) => {
+      Alert.alert('Error', error.message || 'Failed to apply referral code');
+    }
   });
 
   const onRefresh = async () => {
@@ -134,6 +167,58 @@ export default function ProfileScreen() {
           <Button variant="primary" onPress={handleShare} fullWidth style={styles.shareButton}>
             Share Link
           </Button>
+
+          {profile?.referredBy ? (
+            <View style={styles.referredByContainer}>
+              <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+              <Text style={styles.referredByText}>Referred by: {profile.referredBy}</Text>
+            </View>
+          ) : (
+            <View style={styles.enterReferralContainer}>
+              {showReferralInput ? (
+                <View style={styles.referralInputRow}>
+                  <Input
+                    placeholder="Enter referral code"
+                    value={referralInput}
+                    onChangeText={setReferralInput}
+                    autoCapitalize="characters"
+                    containerStyle={styles.referralInputContainer}
+                  />
+                  <Button 
+                    variant="primary" 
+                    size="sm" 
+                    loading={applyReferralCode.isPending}
+                    onPress={() => referralInput.trim() && applyReferralCode.mutate(referralInput)}
+                  >
+                    Apply
+                  </Button>
+                </View>
+              ) : (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onPress={() => setShowReferralInput(true)}
+                  fullWidth
+                  style={{ marginTop: spacing.md }}
+                >
+                  Have a referral code? Enter it here
+                </Button>
+              )}
+            </View>
+          )}
+
+          {(referralStats?.count || 0) > 0 && (
+            <View style={styles.referralStatsRow}>
+              <View style={styles.referralStatBox}>
+                <Text style={styles.referralStatNum}>{referralStats?.count || 0}</Text>
+                <Text style={styles.referralStatLabel}>Referrals</Text>
+              </View>
+              <View style={styles.referralStatBox}>
+                <Text style={styles.referralStatNum}>{(referralStats?.earnings || 0).toLocaleString()}</Text>
+                <Text style={styles.referralStatLabel}>Earned</Text>
+              </View>
+            </View>
+          )}
         </Card>
 
         <Text style={styles.sectionTitle}>Settings</Text>
@@ -301,6 +386,52 @@ const styles = StyleSheet.create({
   },
   shareButton: {
     marginTop: spacing.sm,
+  },
+  referredByContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  referredByText: {
+    ...typography.caption,
+    color: colors.success,
+  },
+  enterReferralContainer: {
+    marginTop: spacing.sm,
+  },
+  referralInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  referralInputContainer: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  referralStatsRow: {
+    flexDirection: 'row',
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    gap: spacing.lg,
+  },
+  referralStatBox: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  referralStatNum: {
+    ...typography.h3,
+    color: colors.primary,
+  },
+  referralStatLabel: {
+    ...typography.tiny,
+    color: colors.textTertiary,
   },
   menu: {
     backgroundColor: colors.backgroundSecondary,
