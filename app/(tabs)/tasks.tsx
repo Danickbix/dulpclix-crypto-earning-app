@@ -7,7 +7,6 @@ import { blink } from '@/lib/blink';
 import { TaskCard } from '@/components/tasks/TaskCard';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as Linking from 'expo-linking';
-import { useBlinkAuth } from '@blinkdotnew/react';
 
 interface Task {
   id: string;
@@ -28,8 +27,7 @@ interface UserTask {
 }
 
 export default function TasksScreen() {
-  const { user } = useBlinkAuth();
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const queryClient = useQueryClient();
   const [claimingTaskId, setClaimingTaskId] = useState<string | null>(null);
 

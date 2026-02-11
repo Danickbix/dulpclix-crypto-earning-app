@@ -7,7 +7,7 @@ import { BalanceWidget } from '@/components/dashboard/BalanceWidget';
 import { StreakWidget } from '@/components/dashboard/StreakWidget';
 import { QuickActions } from '@/components/dashboard/QuickActions';
 import { useQueryClient } from '@tanstack/react-query';
-import { useBlinkAuth } from '@blinkdotnew/react';
+
 import { blink } from '@/lib/blink';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
