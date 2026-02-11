@@ -1,13 +1,14 @@
 {
   "expo": {
-    "name": "blink-expo-starter",
+    "name": "DulpClix Farm",
     "slug": "blink-expo-starter",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "blinkexpo",
-    "userInterfaceStyle": "automatic",
+    "scheme": "dulpclix",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "platforms": ["web", "ios", "android"],
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
@@ -28,9 +29,8 @@
       "package": "com.blink.expostarter"
     },
     "web": {
-      "bundler": "metro",
-      "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "bundler": "metro"
     },
     "plugins": [
       "expo-router",

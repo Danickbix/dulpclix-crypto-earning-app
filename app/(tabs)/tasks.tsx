@@ -7,6 +7,7 @@ import { blink } from '@/lib/blink';
 import { TaskCard } from '@/components/tasks/TaskCard';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as Linking from 'expo-linking';
+import { useBlinkAuth } from '@blinkdotnew/react';
 
 interface Task {
   id: string;
@@ -26,9 +27,20 @@ interface UserTask {
 }
 
 export default function TasksScreen() {
-  const { user, profile } = useAuth();
+  const { user } = useBlinkAuth();
+  const { profile } = useAuth();
   const queryClient = useQueryClient();
   const [claimingTaskId, setClaimingTaskId] = useState<string | null>(null);
+
+  const { data: xpProfile } = useQuery({
+    queryKey: ['xp_profile', user?.id],
+    queryFn: async () => {
+      return await blink.db.table('xp_profiles').get(user?.id!);
+    },
+    enabled: !!user,
+  });
+
+  const currentLevel = xpProfile?.level || 1;
 
   const { data: tasks, isLoading: isLoadingTasks, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
@@ -75,6 +87,12 @@ export default function TasksScreen() {
   });
 
   const handleTaskPress = async (task: Task) => {
+    // Some tasks might be level gated in the future
+    if (task.category === 'premium' && !profile?.isActivated) {
+      Alert.alert('Locked', 'Account activation required for premium tasks.');
+      return;
+    }
+
     if (task.link) {
       await Linking.openURL(task.link);
       // For social tasks, we wait a bit before allowing claim in a real app

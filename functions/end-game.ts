@@ -61,13 +61,61 @@ async function handler(req: Request): Promise<Response> {
     // For Tap Race, score is tap count.
     const maxPossibleScore = elapsedSeconds * MAX_TAP_SPEED;
     if (score > maxPossibleScore) {
+      // Flag for fraud
+      await blink.db.table("fraud_flags").create({
+        id: `flag_${Math.random().toString(36).substr(2, 9)}`,
+        user_id: userId,
+        reason: "IMPOSSIBLE_TAP_SPEED",
+        details: `Score: ${score}, Elapsed: ${elapsedSeconds}, MaxAllowed: ${maxPossibleScore}`
+      });
+
       return new Response(JSON.stringify({ error: "Score too high (Anti-Bot)" }), { status: 400, headers: corsHeaders });
     }
 
     // 4. Calculate Reward
     const reward = Math.floor(score / 5); // 1 token per 5 taps
 
-    // 5. Update Database
+    // Emission Check
+    const MAX_DAILY_EMISSION = 100000;
+    const today = new Date().toISOString().split('T')[0];
+    let emission = await blink.db.table("daily_emissions").get(today);
+    if (!emission) {
+      emission = await blink.db.table("daily_emissions").create({ date: today, total_emitted: 0 });
+    }
+
+    if (reward > 0 && Number(emission.total_emitted) >= MAX_DAILY_EMISSION) {
+      return new Response(JSON.stringify({ error: "Daily token emission limit reached. Try again tomorrow." }), { status: 429, headers: corsHeaders });
+    }
+
+    // 5. XP & Level System
+    const XP_PER_GAME = 15;
+    let xpProfile = await blink.db.table("xp_profiles").get(userId);
+    if (!xpProfile) {
+      xpProfile = await blink.db.table("xp_profiles").create({ user_id: userId, xp: 0, level: 1 });
+    }
+
+    const currentXp = Number(xpProfile.xp) + XP_PER_GAME;
+    let currentLevel = Number(xpProfile.level);
+    
+    // Level Formula: required_xp = 100 * level^1.5
+    const getNextLevelXp = (lvl: number) => Math.floor(100 * Math.pow(lvl, 1.5));
+    let nextLevelXp = getNextLevelXp(currentLevel);
+
+    let leveledUp = false;
+    while (currentXp >= nextLevelXp) {
+      currentLevel++;
+      nextLevelXp = getNextLevelXp(currentLevel);
+      leveledUp = true;
+    }
+
+    // Update XP Profile
+    await blink.db.table("xp_profiles").update(userId, {
+      xp: currentXp,
+      level: currentLevel,
+      updated_at: now.toISOString()
+    });
+
+    // 6. Update Database
     // Mark session as completed
     await blink.db.table("game_sessions").update(sessionId, {
       isCompleted: 1,
@@ -76,6 +124,11 @@ async function handler(req: Request): Promise<Response> {
     });
 
     if (reward > 0) {
+      // Update Emission
+      await blink.db.table("daily_emissions").update(today, {
+        total_emitted: Number(emission.total_emitted) + reward
+      });
+
       // Fetch Profile
       let userProfile;
       const profiles = await blink.db.table("profiles").list({ where: { userId } });
@@ -120,7 +173,10 @@ async function handler(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ 
       ok: true, 
       reward, 
-      score 
+      score,
+      xpGained: XP_PER_GAME,
+      currentLevel,
+      leveledUp
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

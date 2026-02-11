@@ -55,7 +55,19 @@ async function handler(req: Request): Promise<Response> {
       return new Response(JSON.stringify({ error: "Insufficient balance" }), { status: 400, headers: corsHeaders });
     }
 
-    // 2. Daily Limit Check
+    // 2. Activation & Level Check
+    if (!userProfile.isActivated) {
+      return new Response(JSON.stringify({ error: "Account activation required for withdrawals" }), { status: 403, headers: corsHeaders });
+    }
+
+    const xpProfileSearch = await blink.db.table("xp_profiles").list({ where: { user_id: userId } });
+    const currentLevel = xpProfileSearch.length > 0 ? Number(xpProfileSearch[0].level) : 1;
+
+    if (currentLevel < 4) {
+      return new Response(JSON.stringify({ error: "Level 4 required for withdrawals" }), { status: 403, headers: corsHeaders });
+    }
+
+    // 3. Daily Limit Check
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     
@@ -72,7 +84,7 @@ async function handler(req: Request): Promise<Response> {
       return new Response(JSON.stringify({ error: "Daily withdrawal limit reached" }), { status: 400, headers: corsHeaders });
     }
 
-    // 3. Cooldown Check
+    // 4. Cooldown Check
     const lastWithdrawal = await blink.db.table("withdrawals").list({
       where: { userId: userId },
       orderBy: { createdAt: "desc" },
@@ -89,7 +101,7 @@ async function handler(req: Request): Promise<Response> {
       }
     }
 
-    // 4. Process Withdrawal
+    // 5. Process Withdrawal
     const newBalance = Number(userProfile.balance) - Number(amount);
 
     // Update Balance (Debit)

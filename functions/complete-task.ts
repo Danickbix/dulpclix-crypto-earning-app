@@ -99,7 +99,53 @@ async function handler(req: Request): Promise<Response> {
       return new Response(JSON.stringify({ error: "Profile not found" }), { status: 404, headers: corsHeaders });
     }
 
+    // Emission Check
+    const MAX_DAILY_EMISSION = 100000;
+    const today = new Date().toISOString().split('T')[0];
+    let emission = await blink.db.table("daily_emissions").get(today);
+    if (!emission) {
+      emission = await blink.db.table("daily_emissions").create({ date: today, total_emitted: 0 });
+    }
+
+    if (Number(emission.total_emitted) >= MAX_DAILY_EMISSION) {
+      return new Response(JSON.stringify({ error: "Daily token emission limit reached. Try again tomorrow." }), { status: 429, headers: corsHeaders });
+    }
+
+    // 5. XP & Level System
+    const XP_PER_TASK = 10;
+    let xpProfile = await blink.db.table("xp_profiles").get(userId);
+    if (!xpProfile) {
+      xpProfile = await blink.db.table("xp_profiles").create({ user_id: userId, xp: 0, level: 1 });
+    }
+
+    const currentXp = Number(xpProfile.xp) + XP_PER_TASK;
+    let currentLevel = Number(xpProfile.level);
+    
+    // Level Formula: required_xp = 100 * level^1.5
+    const getNextLevelXp = (lvl: number) => Math.floor(100 * Math.pow(lvl, 1.5));
+    let nextLevelXp = getNextLevelXp(currentLevel);
+
+    let leveledUp = false;
+    while (currentXp >= nextLevelXp) {
+      currentLevel++;
+      nextLevelXp = getNextLevelXp(currentLevel);
+      leveledUp = true;
+    }
+
+    // Update XP Profile
+    await blink.db.table("xp_profiles").update(userId, {
+      xp: currentXp,
+      level: currentLevel,
+      updated_at: now.toISOString()
+    });
+
     const rewardAmount = Number(task.reward_amount);
+    
+    // Update Emission
+    await blink.db.table("daily_emissions").update(today, {
+      total_emitted: Number(emission.total_emitted) + rewardAmount
+    });
+
     const newBalance = (Number(userProfile.balance) || 0) + rewardAmount;
 
     // Transactional updates (simulated as individual calls since SQL batch is restricted)
@@ -133,7 +179,10 @@ async function handler(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ 
       ok: true, 
       reward: rewardAmount, 
-      newBalance: newBalance 
+      newBalance: newBalance,
+      xpGained: XP_PER_TASK,
+      currentLevel,
+      leveledUp
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

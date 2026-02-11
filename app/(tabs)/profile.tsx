@@ -1,16 +1,22 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Share, Pressable, Alert } from 'react-native';
-import { Container, Button, Card, Avatar } from '@/components/ui';
+import { Container, Button, Card, Avatar, Input } from '@/components/ui';
 import { colors, typography, spacing, borderRadius, shadows } from '@/constants/design';
 import { useAuth } from '@/context/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { blink } from '@/lib/blink';
 import * as Clipboard from 'expo-clipboard';
+import { useRouter } from 'expo-router';
+
+const ADMIN_EMAIL = 'Danickbix@gmail.com';
 
 export default function ProfileScreen() {
   const { signOut, user, profile, isLoading } = useAuth();
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const [activationCode, setActivationCode] = React.useState('');
+  const [isActivating, setIsActivating] = React.useState(false);
 
   const { data: referralStats } = useQuery({
     queryKey: ['referralStats', user?.id],
@@ -47,6 +53,27 @@ export default function ProfileScreen() {
       });
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const handleActivate = async () => {
+    if (!activationCode) return;
+    setIsActivating(true);
+    try {
+      const response = await blink.functions.invoke('activate-code', {
+        body: { code: activationCode }
+      });
+      if (response.data?.ok) {
+        Alert.alert('Success', response.data.message);
+        queryClient.invalidateQueries({ queryKey: ['profile'] });
+        setActivationCode('');
+      } else {
+        Alert.alert('Error', response.data?.error || 'Invalid code');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to activate account');
+    } finally {
+      setIsActivating(false);
     }
   };
 
@@ -109,8 +136,39 @@ export default function ProfileScreen() {
           </Button>
         </Card>
 
+        {!profile?.isActivated && (
+          <View style={{ marginTop: spacing.xl }}>
+            <Text style={styles.sectionTitle}>Account Activation</Text>
+            <Card style={styles.referralCard}>
+              <Input
+                label="Activation Code"
+                placeholder="Enter 12-digit code"
+                value={activationCode}
+                onChangeText={setActivationCode}
+                autoCapitalize="characters"
+              />
+              <Button
+                variant="primary"
+                onPress={handleActivate}
+                loading={isActivating}
+                disabled={!activationCode}
+                style={{ marginTop: spacing.md }}
+              >
+                Activate Account
+              </Button>
+            </Card>
+          </View>
+        )}
+
         <Text style={styles.sectionTitle}>Settings</Text>
         <View style={styles.menu}>
+          {user?.email === ADMIN_EMAIL && (
+            <Pressable style={styles.menuItem} onPress={() => router.push('/admin')}>
+              <Ionicons name="settings-outline" size={24} color={colors.primary} />
+              <Text style={[styles.menuText, { color: colors.primary }]}>Admin Panel</Text>
+              <Ionicons name="chevron-forward" size={20} color={colors.primary} />
+            </Pressable>
+          )}
           <Pressable style={styles.menuItem}>
             <Ionicons name="person-outline" size={24} color={colors.textSecondary} />
             <Text style={styles.menuText}>Edit Profile</Text>
@@ -132,7 +190,7 @@ export default function ProfileScreen() {
           </Pressable>
         </View>
 
-        <Text style={styles.version}>App Version 1.0.0 (MVP)</Text>
+        <Text style={styles.version}>App Version 1.1.0 (PRO)</Text>
       </ScrollView>
     </Container>
   );

@@ -1,21 +1,36 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
 import { Container } from '@/components/ui';
 import { colors, typography, spacing, borderRadius, shadows } from '@/constants/design';
 import { TapRace } from '@/components/games/TapRace';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeIn } from 'react-native-reanimated';
+import { useQuery } from '@tanstack/react-query';
+import { blink } from '@/lib/blink';
+import { useAuth } from '@/context/AuthContext';
 
 const GAMES = [
-  { id: 'taprace', title: 'Tap Race', description: 'Fastest finger wins tokens!', icon: 'flash', color: colors.primary },
-  { id: 'spin', title: 'Spin Wheel', description: 'Try your luck for big rewards.', icon: 'sync', color: colors.accent, comingSoon: true },
-  { id: 'puzzle', title: 'Crypto Puzzle', description: 'Solve and earn rewards.', icon: 'extension-puzzle', color: '#60A5FA', comingSoon: true },
+  { id: 'tap_race', title: 'Tap Race', description: 'Fastest finger wins tokens!', icon: 'flash', color: colors.primary, level: 1 },
+  { id: 'spin_wheel', title: 'Spin Wheel', description: 'Try your luck for big rewards.', icon: 'sync', color: colors.accent, level: 2, advanced: true },
+  { id: 'puzzle_game', title: 'Crypto Puzzle', description: 'Solve and earn rewards.', icon: 'extension-puzzle', color: '#60A5FA', level: 3, advanced: true },
+  { id: 'reaction_sprint', title: 'Reaction Sprint', description: 'Test your reaction speed.', icon: 'stopwatch', color: colors.error, level: 4, advanced: true },
 ];
 
 export default function GamesScreen() {
+  const { user, profile } = useAuth();
   const [activeGame, setActiveGame] = useState<string | null>(null);
 
-  if (activeGame === 'taprace') {
+  const { data: xpProfile } = useQuery({
+    queryKey: ['xp_profile', user?.id],
+    queryFn: async () => {
+      return await blink.db.table('xp_profiles').get(user?.id!);
+    },
+    enabled: !!user,
+  });
+
+  const currentLevel = xpProfile?.level || 1;
+
+  if (activeGame === 'tap_race') {
     return (
       <Container safeArea>
         <View style={styles.header}>
@@ -29,6 +44,18 @@ export default function GamesScreen() {
     );
   }
 
+  const handleGamePress = (game: typeof GAMES[0]) => {
+    if (game.level > currentLevel) {
+      Alert.alert('Level Locked', `You need to be Level ${game.level} to play this game.`);
+      return;
+    }
+    if (game.advanced && !profile?.isActivated) {
+      Alert.alert('Locked', 'Account activation required for advanced games.');
+      return;
+    }
+    setActiveGame(game.id);
+  };
+
   return (
     <Container safeArea edges={['top']}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -38,37 +65,47 @@ export default function GamesScreen() {
         </View>
 
         <View style={styles.grid}>
-          {GAMES.map((game, index) => (
-            <Animated.View 
-              key={game.id}
-              entering={FadeIn.duration(400).delay(index * 100)}
-              style={styles.gameCard}
-            >
-              <Pressable 
-                style={({ pressed }) => [
-                  styles.gameButton,
-                  pressed && !game.comingSoon && { transform: [{ scale: 0.98 }], opacity: 0.9 }
-                ]}
-                onPress={() => !game.comingSoon && setActiveGame(game.id)}
+          {GAMES.map((game, index) => {
+            const isLocked = game.level > currentLevel || (game.advanced && !profile?.isActivated);
+            
+            return (
+              <Animated.View 
+                key={game.id}
+                entering={FadeIn.duration(400).delay(index * 100)}
+                style={styles.gameCard}
               >
-                <View style={[styles.iconContainer, { backgroundColor: game.color + '22' }]}>
-                  <Ionicons name={game.icon as any} size={32} color={game.color} />
-                </View>
-                <Text style={styles.gameTitle}>{game.title}</Text>
-                <Text style={styles.gameDescription}>{game.description}</Text>
-                
-                {game.comingSoon ? (
-                  <View style={styles.comingSoonBadge}>
-                    <Text style={styles.comingSoonText}>Coming Soon</Text>
+                <Pressable 
+                  style={({ pressed }) => [
+                    styles.gameButton,
+                    pressed && !isLocked && { transform: [{ scale: 0.98 }], opacity: 0.9 }
+                  ]}
+                  onPress={() => handleGamePress(game)}
+                >
+                  <View style={[styles.iconContainer, { backgroundColor: game.color + '22' }]}>
+                    {isLocked ? (
+                      <Ionicons name="lock-closed" size={32} color={colors.textTertiary} />
+                    ) : (
+                      <Ionicons name={game.icon as any} size={32} color={game.color} />
+                    )}
                   </View>
-                ) : (
-                  <View style={styles.playBadge}>
-                    <Text style={styles.playText}>Play Now</Text>
-                  </View>
-                )}
-              </Pressable>
-            </Animated.View>
-          ))}
+                  <Text style={[styles.gameTitle, isLocked && { color: colors.textTertiary }]}>{game.title}</Text>
+                  <Text style={styles.gameDescription}>{game.description}</Text>
+                  
+                  {isLocked ? (
+                    <View style={styles.lockedBadge}>
+                      <Text style={styles.lockedText}>
+                        {game.level > currentLevel ? `Unlock at Lvl ${game.level}` : 'Requires Activation'}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.playBadge}>
+                      <Text style={styles.playText}>Play Now</Text>
+                    </View>
+                  )}
+                </Pressable>
+              </Animated.View>
+            );
+          })}
         </View>
       </ScrollView>
     </Container>
@@ -148,6 +185,18 @@ const styles = StyleSheet.create({
   playText: {
     ...typography.captionBold,
     color: colors.secondaryDark,
+  },
+  lockedBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: colors.textTertiary + '40',
+  },
+  lockedText: {
+    ...typography.captionBold,
+    color: colors.textTertiary,
   },
   comingSoonBadge: {
     backgroundColor: 'rgba(255, 255, 255, 0.05)',

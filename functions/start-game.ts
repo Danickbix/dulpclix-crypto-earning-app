@@ -36,7 +36,33 @@ async function handler(req: Request): Promise<Response> {
 
     if (!gameType) return new Response(JSON.stringify({ error: "Game type required" }), { status: 400, headers: corsHeaders });
 
-    // Check for existing uncompleted sessions to prevent spam
+    // 1. Level & Activation Check
+    const profileSearch = await blink.db.table("profiles").list({ where: { userId } });
+    if (profileSearch.length === 0) return new Response(JSON.stringify({ error: "Profile not found" }), { status: 404, headers: corsHeaders });
+    const profile = profileSearch[0];
+
+    const xpProfileSearch = await blink.db.table("xp_profiles").list({ where: { user_id: userId } });
+    const currentLevel = xpProfileSearch.length > 0 ? Number(xpProfileSearch[0].level) : 1;
+
+    // Advanced games require activation
+    const advancedGames = ["spin_wheel", "puzzle_game", "reaction_sprint"];
+    if (advancedGames.includes(gameType) && !profile.isActivated) {
+      return new Response(JSON.stringify({ error: "Activation required for advanced games" }), { status: 403, headers: corsHeaders });
+    }
+
+    // Level Gates
+    const levelGates: Record<string, number> = {
+      "tap_race": 1,
+      "spin_wheel": 2,
+      "puzzle_game": 3,
+      "reaction_sprint": 4
+    };
+
+    if (levelGates[gameType] && currentLevel < levelGates[gameType]) {
+      return new Response(JSON.stringify({ error: `Level ${levelGates[gameType]} required for this game` }), { status: 403, headers: corsHeaders });
+    }
+
+    // 2. Check for existing uncompleted sessions to prevent spam
     const existingSessions = await blink.db.table("game_sessions").list({
       where: { userId: userId, isCompleted: 0 },
       limit: 1
