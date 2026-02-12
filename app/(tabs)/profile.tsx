@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Share, Pressable, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Share, Pressable, Alert, Platform } from 'react-native';
 import { Container, Button, Card, Avatar, Input } from '@/components/ui';
 import { colors, typography, spacing, borderRadius, shadows } from '@/constants/design';
 import { useAuth } from '@/context/AuthContext';
@@ -17,57 +17,80 @@ export default function ProfileScreen() {
   const router = useRouter();
   const [referralInput, setReferralInput] = useState('');
   const [showReferralInput, setShowReferralInput] = useState(false);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editTwitter, setEditTwitter] = useState('');
+  const [editTelegram, setEditTelegram] = useState('');
+  const [editDiscord, setEditDiscord] = useState('');
 
+  // Fetch referral stats from server (bypasses RLS)
   const { data: referralStats } = useQuery({
-    queryKey: ['referralStats', user?.id, profile?.referralCode],
+    queryKey: ['referralStats', user?.id],
     queryFn: async () => {
-      if (!user || !profile?.referralCode) return { count: 0, earnings: 0 };
+      if (!user) return { count: 0, earnings: 0, referralCode: null, referredBy: null, referredUsers: [] };
       try {
-        const referredUsers = await blink.db.table('profiles').list({
-          where: { referredBy: profile.referralCode }
+        const response = await blink.functions.invoke('referral-action', {
+          body: { action: 'get_referral_stats' }
         });
-        const earnings = await blink.db.table('transactions').list({
-          where: { userId: user.id, type: 'referral' }
-        });
-        const totalEarnings = earnings.reduce((sum: number, t: any) => sum + Number(t.amount), 0);
-        return { count: referredUsers.length, earnings: totalEarnings };
+        const data = response?.data || response;
+        if (data?.error) return { count: 0, earnings: 0, referralCode: profile?.referralCode, referredBy: profile?.referredBy, referredUsers: [] };
+        return data;
       } catch {
-        return { count: 0, earnings: 0 };
+        return { count: 0, earnings: 0, referralCode: profile?.referralCode, referredBy: profile?.referredBy, referredUsers: [] };
       }
     },
-    enabled: !!user && !!profile,
+    enabled: !!user,
   });
 
+  // Apply referral code via edge function
   const applyReferralCode = useMutation({
     mutationFn: async (code: string) => {
-      if (!user || !profile) throw new Error('Not authenticated');
-      if (profile.referredBy) throw new Error('You already have a referral code applied');
-      const upperCode = code.trim().toUpperCase();
-      if (upperCode === profile.referralCode) throw new Error('You cannot use your own referral code');
-      
-      // Validate that the referral code exists
-      const referrerProfiles = await blink.db.table('profiles').list({
-        where: { referralCode: upperCode }
+      const response = await blink.functions.invoke('referral-action', {
+        body: { action: 'apply_referral_code', code: code.trim() }
       });
-      if (referrerProfiles.length === 0) throw new Error('Invalid referral code');
-      
-      // Apply the referral code
-      await blink.db.table('profiles').update(profile.id, {
-        referredBy: upperCode
-      });
-      return upperCode;
+      const data = response?.data || response;
+      if (data?.error) throw new Error(data.error);
+      return data;
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
       queryClient.invalidateQueries({ queryKey: ['referralStats'] });
       setReferralInput('');
       setShowReferralInput(false);
-      Alert.alert('Success', 'Referral code applied! You and your referrer will earn commissions.');
+      showAlert('Success', data?.message || 'Referral code applied!');
     },
     onError: (error: any) => {
-      Alert.alert('Error', error.message || 'Failed to apply referral code');
+      showAlert('Error', error.message || 'Failed to apply referral code');
     }
   });
+
+  // Update profile via edge function
+  const updateProfile = useMutation({
+    mutationFn: async (updates: Record<string, string>) => {
+      const response = await blink.functions.invoke('referral-action', {
+        body: { action: 'update_profile', ...updates }
+      });
+      const data = response?.data || response;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      setShowEditProfile(false);
+      showAlert('Success', 'Profile updated successfully!');
+    },
+    onError: (error: any) => {
+      showAlert('Error', error.message || 'Failed to update profile');
+    }
+  });
+
+  const showAlert = (title: string, message: string) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${title}: ${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
 
   const onRefresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ['profile'] });
@@ -75,21 +98,50 @@ export default function ProfileScreen() {
   };
 
   const handleCopyCode = async () => {
-    if (!profile?.referralCode) return;
-    await Clipboard.setStringAsync(profile.referralCode);
-    Alert.alert('Copied', 'Referral code copied to clipboard!');
+    const code = referralStats?.referralCode || profile?.referralCode;
+    if (!code) return;
+    await Clipboard.setStringAsync(code);
+    showAlert('Copied', 'Referral code copied to clipboard!');
   };
 
   const handleShare = async () => {
-    if (!profile?.referralCode) return;
+    const code = referralStats?.referralCode || profile?.referralCode;
+    if (!code) return;
     try {
       await Share.share({
-        message: `Join DulpClix and start earning crypto! Use my referral code: ${profile.referralCode}\nDownload now: https://dulpclix.live`,
+        message: `Join DulpClix and start earning crypto! Use my referral code: ${code}\nDownload now: https://dulpclix.live`,
       });
     } catch (error) {
       console.error(error);
     }
   };
+
+  const handleOpenEdit = () => {
+    setEditName(profile?.displayName || '');
+    setEditTwitter((profile as any)?.twitterHandle || '');
+    setEditTelegram((profile as any)?.telegramUsername || '');
+    setEditDiscord((profile as any)?.discordUsername || '');
+    setShowEditProfile(true);
+  };
+
+  const handleSaveProfile = () => {
+    const updates: Record<string, string> = {};
+    if (editName && editName !== profile?.displayName) updates.displayName = editName;
+    if (editTwitter !== ((profile as any)?.twitterHandle || '')) updates.twitterHandle = editTwitter;
+    if (editTelegram !== ((profile as any)?.telegramUsername || '')) updates.telegramUsername = editTelegram;
+    if (editDiscord !== ((profile as any)?.discordUsername || '')) updates.discordUsername = editDiscord;
+    
+    if (Object.keys(updates).length === 0) {
+      showAlert('Info', 'No changes to save');
+      return;
+    }
+    updateProfile.mutate(updates);
+  };
+
+  const displayCode = referralStats?.referralCode || profile?.referralCode || '------';
+  const referredBy = referralStats?.referredBy || profile?.referredBy;
+  const referralCount = referralStats?.count || 0;
+  const referralEarnings = referralStats?.earnings || 0;
 
   return (
     <Container safeArea edges={['top']}>
@@ -136,14 +188,15 @@ export default function ProfileScreen() {
           </View>
           <View style={[styles.statBox, styles.statDivider]}>
             <Text style={styles.statLabel}>REFERRALS</Text>
-            <Text style={styles.statValue}>{referralStats?.count || 0}</Text>
+            <Text style={styles.statValue}>{referralCount}</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statLabel}>EARNINGS</Text>
-            <Text style={styles.statValue}>{profile?.balance?.toLocaleString() || 0}</Text>
+            <Text style={styles.statLabel}>BALANCE</Text>
+            <Text style={styles.statValue}>{(profile?.balance || 0).toLocaleString()}</Text>
           </View>
         </View>
 
+        {/* Refer & Earn Section */}
         <Text style={styles.sectionTitle}>Refer & Earn</Text>
         <Card variant="elevated" style={styles.referralCard}>
           <View style={styles.referralHeader}>
@@ -157,7 +210,7 @@ export default function ProfileScreen() {
           <View style={styles.codeContainer}>
             <View style={styles.codeContent}>
               <Text style={styles.codeLabel}>YOUR REFERRAL CODE</Text>
-              <Text style={styles.codeText}>{profile?.referralCode || '------'}</Text>
+              <Text style={styles.codeText}>{displayCode}</Text>
             </View>
             <Pressable onPress={handleCopyCode} style={styles.copyButton}>
               <Ionicons name="copy-outline" size={24} color={colors.primary} />
@@ -165,13 +218,13 @@ export default function ProfileScreen() {
           </View>
 
           <Button variant="primary" onPress={handleShare} fullWidth style={styles.shareButton}>
-            Share Link
+            Share Invite Link
           </Button>
 
-          {profile?.referredBy ? (
+          {referredBy ? (
             <View style={styles.referredByContainer}>
               <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-              <Text style={styles.referredByText}>Referred by: {profile.referredBy}</Text>
+              <Text style={styles.referredByText}>Referred by: {referredBy}</Text>
             </View>
           ) : (
             <View style={styles.enterReferralContainer}>
@@ -207,20 +260,92 @@ export default function ProfileScreen() {
             </View>
           )}
 
-          {(referralStats?.count || 0) > 0 && (
+          {referralCount > 0 && (
             <View style={styles.referralStatsRow}>
               <View style={styles.referralStatBox}>
-                <Text style={styles.referralStatNum}>{referralStats?.count || 0}</Text>
-                <Text style={styles.referralStatLabel}>Referrals</Text>
+                <Text style={styles.referralStatNum}>{referralCount}</Text>
+                <Text style={styles.referralStatLabel}>Friends Invited</Text>
               </View>
               <View style={styles.referralStatBox}>
-                <Text style={styles.referralStatNum}>{(referralStats?.earnings || 0).toLocaleString()}</Text>
-                <Text style={styles.referralStatLabel}>Earned</Text>
+                <Text style={styles.referralStatNum}>{referralEarnings.toLocaleString()}</Text>
+                <Text style={styles.referralStatLabel}>DULP Earned</Text>
               </View>
+            </View>
+          )}
+
+          {referralStats?.referredUsers && referralStats.referredUsers.length > 0 && (
+            <View style={styles.referredListContainer}>
+              <Text style={styles.referredListTitle}>Your Referrals</Text>
+              {referralStats.referredUsers.map((u: any, i: number) => (
+                <View key={i} style={styles.referredUserRow}>
+                  <Ionicons name="person-circle" size={20} color={colors.textSecondary} />
+                  <Text style={styles.referredUserName}>{u.displayName}</Text>
+                  <Text style={styles.referredUserDate}>
+                    {u.joinedAt ? new Date(u.joinedAt).toLocaleDateString() : ''}
+                  </Text>
+                </View>
+              ))}
             </View>
           )}
         </Card>
 
+        {/* Edit Profile Section */}
+        {showEditProfile && (
+          <>
+            <Text style={styles.sectionTitle}>Edit Profile</Text>
+            <Card variant="elevated" style={styles.editCard}>
+              <Input
+                label="Display Name"
+                value={editName}
+                onChangeText={setEditName}
+                placeholder="Your display name"
+                containerStyle={styles.editInput}
+              />
+              <Input
+                label="Twitter Handle"
+                value={editTwitter}
+                onChangeText={setEditTwitter}
+                placeholder="@username"
+                containerStyle={styles.editInput}
+              />
+              <Input
+                label="Telegram Username"
+                value={editTelegram}
+                onChangeText={setEditTelegram}
+                placeholder="@username"
+                containerStyle={styles.editInput}
+              />
+              <Input
+                label="Discord Username"
+                value={editDiscord}
+                onChangeText={setEditDiscord}
+                placeholder="username#1234"
+                containerStyle={styles.editInput}
+              />
+              <View style={styles.editActions}>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onPress={() => setShowEditProfile(false)} 
+                  style={{ flex: 1, marginRight: spacing.sm }}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  variant="primary" 
+                  size="sm" 
+                  loading={updateProfile.isPending}
+                  onPress={handleSaveProfile}
+                  style={{ flex: 1 }}
+                >
+                  Save Changes
+                </Button>
+              </View>
+            </Card>
+          </>
+        )}
+
+        {/* Settings Menu */}
         <Text style={styles.sectionTitle}>Settings</Text>
         <View style={styles.menu}>
           {(user?.email === ADMIN_EMAIL || profile?.role === 'admin') && (
@@ -230,7 +355,7 @@ export default function ProfileScreen() {
               <Ionicons name="chevron-forward" size={20} color={colors.primary} />
             </Pressable>
           )}
-          <Pressable style={styles.menuItem}>
+          <Pressable style={styles.menuItem} onPress={handleOpenEdit}>
             <Ionicons name="person-outline" size={24} color={colors.textSecondary} />
             <Text style={styles.menuText}>Edit Profile</Text>
             <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
@@ -251,7 +376,7 @@ export default function ProfileScreen() {
           </Pressable>
         </View>
 
-        <Text style={styles.version}>App Version 1.1.0 (PRO)</Text>
+        <Text style={styles.version}>App Version 1.2.0 (PRO)</Text>
       </ScrollView>
     </Container>
   );
@@ -432,6 +557,45 @@ const styles = StyleSheet.create({
   referralStatLabel: {
     ...typography.tiny,
     color: colors.textTertiary,
+  },
+  referredListContainer: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  referredListTitle: {
+    ...typography.captionBold,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+  },
+  referredUserRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  referredUserName: {
+    ...typography.caption,
+    color: colors.text,
+    flex: 1,
+  },
+  referredUserDate: {
+    ...typography.tiny,
+    color: colors.textTertiary,
+  },
+  editCard: {
+    padding: spacing.lg,
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: borderRadius.xl,
+    marginBottom: spacing.xl,
+  },
+  editInput: {
+    marginBottom: spacing.md,
+  },
+  editActions: {
+    flexDirection: 'row',
+    marginTop: spacing.sm,
   },
   menu: {
     backgroundColor: colors.backgroundSecondary,

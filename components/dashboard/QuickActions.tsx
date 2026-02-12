@@ -8,8 +8,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 const ACTIONS = [
   { id: 'earn', label: 'Earn Now', icon: 'cash-outline', color: colors.primary, href: '/(tabs)/tasks' },
   { id: 'games', label: 'Play Games', icon: 'game-controller-outline', color: colors.accent, href: '/(tabs)/games' },
+  { id: 'refer', label: 'Refer & Earn', icon: 'people-outline', color: '#F59E0B', href: '/(tabs)/profile' },
   { id: 'leaderboard', label: 'Leaderboard', icon: 'trophy-outline', color: '#60A5FA', href: '/leaderboard' },
-  { id: 'history', label: 'History', icon: 'time-outline', color: colors.textSecondary, href: '/(tabs)/wallet' },
 ];
 
 export function QuickActions() {
@@ -57,7 +57,8 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   actionItem: {
-    width: '47%', // roughly half width with gap
+    width: '30%', // thirds layout for 3 items
+    flexGrow: 1,
   },
   actionButton: {
     backgroundColor: colors.backgroundSecondary,

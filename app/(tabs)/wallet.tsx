@@ -83,17 +83,20 @@ export default function WalletScreen() {
     ]);
   };
 
+  // Use user ID as wallet address (not referral code)
+  const walletAddress = user?.id ? `DULP-${user.id.substring(0, 16).toUpperCase()}` : '';
+
   const handleCopyAddress = async () => {
-    if (!profile?.referralCode) return;
-    await Clipboard.setStringAsync(profile.referralCode);
+    if (!walletAddress) return;
+    await Clipboard.setStringAsync(walletAddress);
     Alert.alert('Copied', 'Wallet address copied to clipboard!');
   };
 
   const handleShareAddress = async () => {
-    if (!profile?.referralCode) return;
+    if (!walletAddress) return;
     try {
       await Share.share({
-        message: `My DulpClix Wallet Address: ${profile.referralCode}`,
+        message: `My DulpClix Wallet Address: ${walletAddress}`,
       });
     } catch (error) {
       console.error(error);
@@ -142,7 +145,7 @@ export default function WalletScreen() {
           <Text style={styles.receiveSubtitle}>Use this address to receive tokens from other users.</Text>
           
           <View style={styles.addressBox}>
-            <Text style={styles.addressText}>{profile?.referralCode}</Text>
+            <Text style={styles.addressText}>{walletAddress}</Text>
             <Pressable onPress={handleCopyAddress} style={styles.copyButton}>
               <Ionicons name="copy" size={20} color={colors.primary} />
             </Pressable>

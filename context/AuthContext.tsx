@@ -16,7 +16,12 @@ interface Profile {
   createdAt: string;
   role: string;
   twitterHandle: string | null;
+  instagramHandle: string | null;
+  tiktokHandle: string | null;
+  youtubeHandle: string | null;
   telegramUsername: string | null;
+  discordUsername: string | null;
+  isActivated: number;
 }
 
 interface AuthContextType {
@@ -83,13 +88,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: isAdmin ? 'admin' : 'user',
         });
 
-        // Create initial XP profile
+        // Create initial XP profile (user_id is the PK)
         await blink.db.table('xp_profiles').create({
-          id: user.id,
           userId: user.id,
           xp: 0,
           level: 1,
-          totalEarned: 0,
         }).catch(err => console.log('XP Profile creation skipped or failed:', err));
 
         return newProfile as Profile;
